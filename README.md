@@ -18,11 +18,11 @@ Principles:
 
 ### Clean-room
 
-[Graphify](https://github.com/Graphify-Labs/graphify) is a research reference only. Its ideas are studied; its code, data models, APIs and interface are not copied, ported or used as a dependency.
+Similar tools were studied as research reference only. Their general ideas informed the design; this project is an independent, original implementation with its own code, data models, APIs and interface, and does not copy, port or depend on any of them.
 
 ## Status
 
-Early stage. A minimal TypeScript core exists (discovery, TS/JS and Java import and declaration extraction, JSON graph, queries, CLI). See [docs/design.md](docs/design.md) for scope and known limits. Graphify research (Phase 1) is only partially done.
+Early stage. A minimal TypeScript core exists (discovery, TS/JS and Java import and declaration extraction, JSON graph, queries, CLI). See [docs/design.md](docs/design.md) for scope and known limits. Prior-art research (Phase 1) is only partially done.
 
 ## Quick start
 
