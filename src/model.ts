@@ -39,6 +39,10 @@ export interface FileFacts {
   /** Angular: simple element selector of a component declared here, and custom elements used in its (inline or html) template. */
   selectors?: string[];
   elements?: string[];
+  /** TS/JS: URL-like string literals (start with "/", template parts as `{}`), used to link a client to the backend route it calls. */
+  urls?: string[];
+  /** Java only: full JAX-RS routes (class `@Path` + method `@Path`), path parameters as `{name}`. */
+  routes?: string[];
   /** Java only: declared package. */
   javaPackage?: string;
   symbols: Array<Omit<GraphNode, "id" | "kind" | "path"> & { name: string }>;

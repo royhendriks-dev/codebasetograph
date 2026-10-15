@@ -1,4 +1,5 @@
 import ts from "typescript";
+import { isTestPath } from "./query.js";
 import { createHash } from "node:crypto";
 import type { FileFacts } from "./model.js";
 import { customElements, elementSelector } from "./angular.js";
@@ -6,7 +7,7 @@ import { customElements, elementSelector } from "./angular.js";
 const ANGULAR = new Set(["Component", "Directive", "Pipe", "Injectable", "NgModule"]);
 
 /** Parses source text with the TypeScript parser. Source is never executed. Malformed input yields partial facts. */
-export const TS_PARSER_VERSION = "ts-2";
+export const TS_PARSER_VERSION = "ts-3";
 
 export function parseFile(relPath: string, text: string): FileFacts {
   const hash = createHash("sha256").update(text).digest("hex");
@@ -59,7 +60,17 @@ export function parseFile(relPath: string, text: string): FileFacts {
     return undefined;
   }
 
+  /** URL-like literals, e.g. '/api/auth' or `/api/${game}/highscores` (substitutions become `{}`). Matching happens at link time. */
+  const addRoute = (text: string) => {
+    if (/^\/[\w-]+\/[\w{}/.-]*$/.test(text) && text.length <= 120 && (facts.urls?.length ?? 0) < 40 && !facts.urls?.includes(text)) (facts.urls ??= []).push(text);
+  };
+  const templateText = (t: ts.TemplateExpression) => t.head.text + t.templateSpans.map((sp) => "{}" + sp.literal.text).join("");
+
   function visit(n: ts.Node, top: boolean): void {
+    if (!isTestPath(relPath)) {
+      if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) addRoute(n.text);
+      else if (ts.isTemplateExpression(n)) addRoute(templateText(n));
+    }
     if (ts.isImportDeclaration(n) && ts.isStringLiteral(n.moduleSpecifier)) {
       const names: string[] = [];
       const c = n.importClause;
