@@ -112,3 +112,10 @@ Per-file facts are cached by SHA-256 of content. Changed files are re-parsed, de
 - Kubernetes: an Ingress `backend` service name and a HorizontalPodAutoscaler `scaleTargetRef` become object references like Secrets already are (`inferred` when one file declares that `Kind/name`, `unresolved` when none does).
 - A Service links to workloads in another file whose pod template labels contain all of its `selector` labels (Deployment, StatefulSet, DaemonSet, Job, CronJob; `inferred`: namespaces are ignored). A Service and workload in the same file get no file edge. Parser `config-8`.
 - Not done: Helm and kustomize generators, NetworkPolicy selectors, image to manifest. 30-task portfolio benchmark unchanged (70%).
+
+## Agent access (`mcp`, `hook`)
+
+- `src/agent.ts`: a hand-written MCP server over stdio (JSON-RPC 2.0, newline-delimited; `initialize`, `ping`, `tools/list`, `tools/call`) so there is no SDK dependency. Seven read-only tools wrap the query functions; the graph is loaded per call. Unknown methods and bad JSON get JSON-RPC errors.
+- `cbtg hook`: Claude Code `UserPromptSubmit` hook; prompt -> `context` (400 token budget) -> `additionalContext`. Silent (empty output, exit 0) on any problem so it can never block a prompt.
+- Every tool and hook output ends with a note that graph output is pointers, not instructions (names in the graph come from untrusted repository text).
+- Not verified: behaviour in a live MCP client or Claude Code session; only the protocol messages are tested. No token saving is claimed for the hook: it adds context to every prompt, so its value has to be measured (agent benchmark).
