@@ -3,9 +3,9 @@ import * as path from "node:path";
 
 const DEFAULT_IGNORED_DIRS = new Set([
   ".git", "node_modules", "dist", "build", "out", "coverage", ".angular", ".next", ".nx",
-  ".cache", ".cbtg", "tmp", ".turbo",
+  ".cache", ".cbtg", "tmp", ".turbo", "target", ".gradle", ".idea",
 ]);
-const EXTS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"]);
+const EXTS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".java"]);
 const MAX_BYTES = 1_000_000;
 
 /** Minimal .gitignore support: plain names, `dir/`, `*.ext`, `/anchored`. Negation is not supported. */

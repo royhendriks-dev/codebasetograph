@@ -5,11 +5,13 @@ import type { FileFacts } from "./model.js";
 const ANGULAR = new Set(["Component", "Directive", "Pipe", "Injectable", "NgModule"]);
 
 /** Parses source text with the TypeScript parser. Source is never executed. Malformed input yields partial facts. */
+export const TS_PARSER_VERSION = "ts-1";
+
 export function parseFile(relPath: string, text: string): FileFacts {
   const hash = createHash("sha256").update(text).digest("hex");
   const kind = /\.(tsx|jsx)$/.test(relPath) ? ts.ScriptKind.TSX : relPath.endsWith("js") ? ts.ScriptKind.JS : ts.ScriptKind.TS;
   const sf = ts.createSourceFile(relPath, text, ts.ScriptTarget.Latest, true, kind);
-  const facts: FileFacts = { path: relPath, hash, parseError: false, symbols: [], imports: [] };
+  const facts: FileFacts = { path: relPath, hash, lang: "ts", parser: TS_PARSER_VERSION, parseError: false, symbols: [], imports: [] };
   const parseDiagnostics = (sf as unknown as { parseDiagnostics?: unknown[] }).parseDiagnostics;
   facts.parseError = !!parseDiagnostics && parseDiagnostics.length > 0;
 
