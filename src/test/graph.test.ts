@@ -234,6 +234,17 @@ test("k8s: kustomization resources and Secret/ConfigMap/PVC/ServiceAccount refer
   assert.equal(graph.edges.some((e) => e.from === "file:compose.yaml" && e.specifier?.includes("WEB_IMAGE")), false, "build + image: the image is only a tag");
 });
 
+test("nginx: .conf files expose locations, upstreams and the headers they set", async () => {
+  const root = await fixture({
+    "web/default.conf": `upstream api { server backend:8080; }\nserver {\n  server_name example.test;\n  location /api/ { proxy_pass http://api; }\n  location ~* \\.(?:js|css)$ {\n    add_header Content-Security-Policy "default-src 'none'" always; # comment\n    add_header Content-Security-Policy "again";\n  }\n}\n`,
+  });
+  const { graph } = await indexRepo(root);
+  const names = graph.nodes.filter((n) => n.path === "web/default.conf" && n.kind === "symbol").map((n) => n.name).sort();
+  assert.deepEqual(names, ["header:Content-Security-Policy", "location:/api/", "location:\\.(?:js|css)$", "server_name:example.test", "upstream:api"]);
+  const { items } = context(graph, "tighten the content security policy header", 800);
+  assert.equal(items[0].path, "web/default.conf");
+});
+
 test("config: pathological nesting does not crash the indexer", async () => {
   const root = await fixture({ "deep.yml": "a: " + "[".repeat(20000) + "\n", "ok.yml": "k: v\n" });
   const { graph } = await indexRepo(root);

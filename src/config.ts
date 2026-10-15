@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { LineCounter, type Document, isMap, isScalar, isSeq, parseAllDocuments, type Node as YNode } from "yaml";
 import type { FileFacts } from "./model.js";
 
-export const CONFIG_PARSER_VERSION = "config-3";
+export const CONFIG_PARSER_VERSION = "config-4";
 
 type Symbols = FileFacts["symbols"];
 type Imports = FileFacts["imports"];
@@ -47,6 +47,28 @@ function parseSql(text: string, symbols: Symbols): void {
     const line = text.slice(0, m.index).split("\n").length;
     symbols.push({ name: m[2].replace(/"/g, ""), detail: `sql ${m[1].toLowerCase().replace(/\s+/g, " ")}`, lines: [line, line] });
   }
+}
+
+const NGINX_RULES: Array<[RegExp, string]> = [
+  [/^add_header\s+([\w-]+)/, "header"],
+  [/^location\s+(?:[=~*^]+\s+)?(\S+)/, "location"],
+  [/^upstream\s+([^\s;{]+)/, "upstream"],
+  [/^server_name\s+([^\s;]+)/, "server_name"],
+];
+
+/** nginx `.conf`: server/upstream/location blocks and the headers they set, by line regex. Heuristic, not an nginx parser. */
+function parseNginx(text: string, symbols: Symbols): void {
+  const seen = new Set<string>();
+  text.split(/\r?\n/).forEach((raw, i) => {
+    const line = raw.replace(/#.*$/, "").trim();
+    for (const [re, label] of NGINX_RULES) {
+      const m = re.exec(line);
+      if (!m) continue;
+      const name = `${label}:${m[1]}`;
+      if (!seen.has(name)) { seen.add(name); symbols.push({ name, detail: "nginx", lines: [i + 1, i + 1] }); }
+      break;
+    }
+  });
 }
 
 function collectImages(v: unknown, out: string[], depth = 0): void {
@@ -175,6 +197,7 @@ export function parseConfig(relPath: string, text: string): FileFacts {
   try {
     const base = path.posix.basename(relPath);
     if (/^Dockerfile/.test(base)) parseDockerfile(text, facts.symbols, facts.imports);
+    else if (base.endsWith(".conf")) parseNginx(text, facts.symbols);
     else if (base.endsWith(".sql")) parseSql(text, facts.symbols);
     else facts.parseError = parseYaml(relPath, text, facts.symbols, facts.imports);
   } catch {
