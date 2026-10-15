@@ -5,7 +5,7 @@ const DEFAULT_IGNORED_DIRS = new Set([
   ".git", "node_modules", "dist", "build", "out", "coverage", ".angular", ".next", ".nx",
   ".cache", ".cbtg", "tmp", ".turbo", "target", ".gradle", ".idea",
 ]);
-const EXTS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".java", ".yml", ".yaml", ".sql", ".conf", ".html", ".scss", ".css"]);
+const EXTS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".java", ".yml", ".yaml", ".sql", ".conf", ".md", ".html", ".scss", ".css"]);
 const isIndexable = (name: string) => EXTS.has(path.extname(name)) || /^Dockerfile(\.[\w.-]+)?$/.test(name);
 const MAX_BYTES = 1_000_000;
 

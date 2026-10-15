@@ -88,3 +88,8 @@ Per-file facts are cached by SHA-256 of content. Changed files are re-parsed, de
 3. Benchmark harness: grep-based baseline vs graph context on the same tasks (files read, lines, tokens, missed relevant files).
 4. Real-repo index timing and incremental timing.
 5. Optional adapters (MCP, editor integrations) on top of the same JSON graph.
+
+## Markdown
+
+- `.md` files: headings (h1-h6, outside code fences, max 300) become symbols (`md hN`); relative links to indexed files become `references` edges, evidence `resolved` (URLs, images, missing targets and links leaving the repo give no edge). Parser `config-5`.
+- Ranking: Markdown files and headings count x0.3 in `context`, like tests. Measured on the portfolio copy (30 code-edit tasks): graph recall 72% to 70%, tokens 5.5k to 6.6k; the grep baseline also drops (51% to 32%) because docs add matches. The tasks all target code, so this cost is expected; a documentation question is not covered by this benchmark.
