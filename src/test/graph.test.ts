@@ -140,3 +140,19 @@ test("cache: facts from an older parser version are re-parsed", async () => {
   await fs.writeFile(gp, JSON.stringify(g));
   assert.equal((await indexRepo(root)).stats.parsed, 1);
 });
+
+test("context ranking: source ranks above specs; stopwords ignored; exported symbol beats private const", async () => {
+  const root = await fixture({
+    "src/auth.service.ts": `export class AuthService {}\nconst AUTH_URL = '/a';\n`,
+    "src/auth.service.spec.ts": `import { AuthService } from './auth.service';\nconst AUTH_SPEC = 1;\n`,
+    "tests/e2e/auth.ts": `export const x = 1;`,
+  });
+  const { graph } = await indexRepo(root);
+  const { items } = context(graph, "how to change the auth service", 800);
+  const first = items.findIndex((i) => i.path === "src/auth.service.ts");
+  const spec = items.findIndex((i) => i.path === "src/auth.service.spec.ts");
+  assert.equal(items[0].path, "src/auth.service.ts");
+  assert.ok(first < spec, "source before spec");
+  const { isTestPath } = await import("../query.js");
+  assert.ok(isTestPath("a/b.spec.ts") && isTestPath("tests/e2e/auth.ts") && !isTestPath("src/auth.ts"));
+});

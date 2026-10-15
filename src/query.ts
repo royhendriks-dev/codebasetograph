@@ -37,6 +37,32 @@ export function related(g: Graph, path: string, depth = 1): Array<{ path: string
   return [...seen].filter(([p]) => p !== path).map(([p, distance]) => ({ path: p, distance }));
 }
 
+const STOPWORDS = new Set(["the", "and", "for", "how", "what", "where", "with", "from", "that", "this", "change", "fix", "add", "use", "een", "het", "van", "voor", "met", "hoe"]);
+
+/** Spec/test files are rarely the file to edit first; they still match, but rank lower. */
+export function isTestPath(p: string): boolean {
+  return /\.(spec|test)\.[cm]?[jt]sx?$/.test(p) || /(^|\/)(__tests__|tests?|e2e)\//.test(p);
+}
+
+/**
+ * Plain, explainable scoring (a baseline to measure against, not a quality claim):
+ * exact name match 3, name contains word 2, path contains word 1; exported symbols +1; tests x0.3.
+ * Non-exported symbols need a name match; a path-only match is kept for files, not for symbols.
+ */
+export function scoreNode(n: GraphNode, words: string[]): number {
+  const name = n.name.toLowerCase(), path = (n.path ?? "").toLowerCase();
+  let s = 0;
+  for (const w of words) {
+    if (name === w) s += 3;
+    else if (name.includes(w)) s += 2;
+    else if (n.kind === "file" && path.includes(w)) s += 1;
+  }
+  if (s === 0) return 0;
+  if (n.kind === "symbol" && n.exported) s += 1;
+  if (n.path && isTestPath(n.path)) s *= 0.3;
+  return s;
+}
+
 export interface ContextItem { path: string; lines?: [number, number]; why: string; evidence: string }
 
 /**
@@ -45,14 +71,13 @@ export interface ContextItem { path: string; lines?: [number, number]; why: stri
  * Output is a pointer list, not source code: the agent must still open the files it needs.
  */
 export function context(g: Graph, task: string, budgetTokens = 800): { text: string; items: ContextItem[]; truncated: boolean } {
-  const words = [...new Set(task.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3))];
+  const words = [...new Set(task.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !STOPWORDS.has(w)))];
   const score = new Map<string, number>();
   const items: ContextItem[] = [];
   for (const n of g.nodes) {
     if (n.kind === "package") continue;
-    const hits = words.filter((w) => n.name.toLowerCase().includes(w) || (n.path ?? "").toLowerCase().includes(w)).length;
-    if (!hits) continue;
-    score.set(n.id, hits);
+    const s = scoreNode(n, words);
+    if (s > 0) score.set(n.id, s);
   }
   const ranked = [...score].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([id]) => g.nodes.find((n) => n.id === id)!);
   const seenFiles = new Set<string>();
