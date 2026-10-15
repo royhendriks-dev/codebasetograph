@@ -3,6 +3,7 @@ import { indexRepo, loadGraph } from "./build.js";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { renderHtml } from "./view.js";
+import { renderGraphHtml, DEFAULT_MAX_NODES } from "./viewGraph.js";
 import { loadTasks, renderReport, runBenchmark } from "./bench.js";
 import { context, dependencies, dependents, explain, findSymbols, related, resolveTarget, shortestPath } from "./query.js";
 
@@ -20,6 +21,7 @@ const usage = `cbtg <command> [--root dir]
   explain <name|path>         location, symbols and links of one file or symbol (exit 3: ambiguous, 4: not found)
   path <from> <to>            shortest chain of resolved links between two files or symbols
   view [--out file]           write a self-contained HTML explorer (default .cbtg/graph.html)
+  view --graph [--max-nodes n] [--out file]   drawn file graph (default .cbtg/graph-map.html, 400 nodes)
   bench <tasks.json> [--files n] [--budget tokens]   compare grep baseline with graph context on tasks with known relevant files
   context "<task>" [--budget tokens]   pointer list of task-relevant code`;
 
@@ -61,7 +63,16 @@ async function main() {
       }
       break;
     }
-    case "view": { const out = path.resolve(flag("out") ?? path.join(root, ".cbtg", "graph.html")); await fs.mkdir(path.dirname(out), { recursive: true }); await fs.writeFile(out, renderHtml(g)); console.log(`wrote ${out}`); break; }
+    case "view": {
+      const map = process.argv.includes("--graph");
+      const out = path.resolve(flag("out") ?? path.join(root, ".cbtg", map ? "graph-map.html" : "graph.html"));
+      const max = Number(flag("max-nodes") ?? DEFAULT_MAX_NODES);
+      if (!Number.isInteger(max) || max < 1) { console.error("--max-nodes must be a positive integer"); process.exit(2); }
+      await fs.mkdir(path.dirname(out), { recursive: true });
+      await fs.writeFile(out, map ? renderGraphHtml(g, max) : renderHtml(g));
+      console.log(`wrote ${out}`);
+      break;
+    }
     case "context": { const r = context(g, arg, Number(flag("budget") ?? 800)); console.log(r.text); if (r.truncated) console.log("(truncated by budget)"); break; }
     case "bench": {
       if (!arg) { console.error("usage: cbtg bench <tasks.json>"); process.exit(1); }

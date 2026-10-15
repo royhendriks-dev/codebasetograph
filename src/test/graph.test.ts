@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import * as vm from "node:vm";
 import { indexRepo, loadGraph } from "../build.js";
 import { parseFile } from "../parse.js";
 import { context, dependents, findSymbols } from "../query.js";
@@ -103,6 +104,30 @@ test("view: HTML is self-contained and escapes hostile names", async () => {
   assert.ok(!html.includes("</script><img"), "name must not break out of the data script");
   assert.doesNotMatch(html, /https?:\/\//, "no external resources");
   assert.doesNotMatch(html, /innerHTML/);
+});
+
+test("view --graph: drawn graph data is limited, deduplicated, self-contained and escapes hostile names", async () => {
+  const { renderGraphHtml, graphData } = await import("../viewGraph.js");
+  const files: Record<string, string> = { "src/</script><img src=x onerror=alert(1)>.ts": `import "./hub";`, "src/hub.ts": `export const h = 1;`, "src/lonely.ts": `export const l = 1;`, "src/miss.ts": `import "./nope";` };
+  for (let i = 0; i < 5; i++) files[`src/leaf${i}.ts`] = `import { h } from "./hub"; import { h as h2 } from "./hub";`;
+  const root = await fixture(files);
+  const { graph } = await indexRepo(root);
+  const all = graphData(graph);
+  assert.equal(all.nodes.some((n) => n.id === "src/lonely.ts"), false, "files without links are not drawn");
+  assert.equal(all.edges.filter((e) => e.from === "src/leaf0.ts" && e.to === "src/hub.ts").length, 1, "duplicate edges collapse");
+  assert.ok(all.edges.some((e) => e.evidence === "unresolved"), "unresolved links stay visible");
+  assert.ok(all.nodes.every((n) => !n.id.startsWith("pkg:")), "no package nodes");
+  const small = graphData(graph, 2);
+  assert.equal(small.shown, 2);
+  assert.ok(small.shown < small.connected, "truncation is reported");
+  assert.ok(small.nodes.some((n) => n.id === "src/hub.ts"), "most connected file is kept");
+  const html = renderGraphHtml(graph);
+  assert.ok(!html.includes("</script><img"));
+  assert.doesNotMatch(html, /https?:\/\//);
+  assert.doesNotMatch(html, /innerHTML/);
+  const script = html.split("<script>")[1].split("</script>")[0];
+  assert.doesNotThrow(() => new vm.Script(script), "inline script must be valid JavaScript");
+  assert.equal(graphData({ ...graph, edges: [] }).shown, 0);
 });
 
 test("java: package, imports, annotations, methods, same-package and cross-package links", async () => {
