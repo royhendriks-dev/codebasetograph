@@ -93,3 +93,14 @@ test("persistence: graph reloads; corrupt graph file triggers clean rebuild", as
   const r = await indexRepo(root);
   assert.equal(r.stats.parsed, 3);
 });
+
+test("view: HTML is self-contained and escapes hostile names", async () => {
+  const { renderHtml } = await import("../view.js");
+  const root = await fixture({ "src/</script><img src=x onerror=alert(1)>.ts": `export const a = 1;` });
+  const { graph } = await indexRepo(root);
+  const html = renderHtml(graph);
+  assert.ok(html.includes("<title>codebasetograph</title>"));
+  assert.ok(!html.includes("</script><img"), "name must not break out of the data script");
+  assert.doesNotMatch(html, /https?:\/\//, "no external resources");
+  assert.doesNotMatch(html, /innerHTML/);
+});
