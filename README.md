@@ -22,7 +22,18 @@ Principles:
 
 ## Status
 
-Early stage. Phase 1 (research) and Phase 2 (design) come before implementation.
+Early stage. A minimal TypeScript core exists (discovery, TS/JS import and declaration extraction, JSON graph, queries, CLI). See [docs/design.md](docs/design.md) for scope and known limits. Graphify research (Phase 1) is only partially done.
+
+## Quick start
+
+```
+npm install && npm run build
+node dist/cli.js index --root <repo>
+node dist/cli.js context "what you are changing" --root <repo>
+npm test
+```
+
+Agents: see [AGENTS.md](AGENTS.md) and [skills/codebasetograph/SKILL.md](skills/codebasetograph/SKILL.md). The instructions are provider-neutral.
 
 ## Workflow
 
