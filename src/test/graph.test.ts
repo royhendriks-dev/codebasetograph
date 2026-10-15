@@ -303,3 +303,19 @@ test("explain/path: names resolve without guessing, paths follow resolved links 
   assert.equal(shortestPath(graph, "src/island.ts", "a/util.ts"), undefined); // both only share an inferred package
   assert.deepEqual(shortestPath(graph, "src/main.ts", "src/main.ts")?.length, 1);
 });
+
+test("links: deps, related and path follow config references and Java supertypes, only resolved ones in path", async () => {
+  const root = await fixture({
+    "docker-compose.yml": `services:\n  api:\n    build: ./api\n`,
+    "api/Dockerfile": `FROM node:20\n`,
+    "src/main/java/a/Base.java": `package a;\npublic class Base {}\n`,
+    "src/main/java/a/Impl.java": `package a;\npublic class Impl extends Base {}\n`,
+  });
+  const { graph } = await indexRepo(root);
+  const { dependencies, dependents, related, shortestPath } = await import("../query.js");
+  assert.deepEqual(dependencies(graph, "docker-compose.yml").map((e) => [e.kind, e.to, e.evidence]), [["references", "file:api/Dockerfile", "resolved"]]);
+  assert.equal(dependents(graph, "api/Dockerfile").length, 1);
+  assert.deepEqual(related(graph, "api/Dockerfile").map((r) => r.path), ["docker-compose.yml"]);
+  assert.deepEqual(shortestPath(graph, "docker-compose.yml", "api/Dockerfile")?.map((s) => s.path), ["docker-compose.yml", "api/Dockerfile"]);
+  assert.deepEqual(shortestPath(graph, "src/main/java/a/Impl.java", "src/main/java/a/Base.java")?.map((s) => s.path), ["src/main/java/a/Impl.java", "src/main/java/a/Base.java"]);
+});
