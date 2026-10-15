@@ -103,3 +103,8 @@ Per-file facts are cached by SHA-256 of content. Changed files are re-parsed, de
 - `package.json`: dependency names (all four sections) become `imports` edges to the same `pkg:<name>` node TS imports use, evidence `extracted` (read straight from the file, not resolved). Scripts become symbols (`script:build`); versions and script commands are never stored. `workspaces` globs are not expanded.
 - `pom.xml` (regex, not an XML parser, comments stripped): own artifactId as symbol, `<module>` as path reference to the child `pom.xml` (resolved or unresolved), `<dependency>` as `groupId:artifactId`. A dependency whose artifactId is declared by exactly one other pom in the repo links to that file (`inferred`: name match); others become `pkg:maven:<g>:<a>` (`extracted`). Dependencies with `${...}` properties are skipped; parent poms are not followed. Parser `config-7`.
 - Ranking: npm scripts and maven artifacts count x0.3 (names like `test`/`build` match too many tasks). 30-task portfolio benchmark: recall 70% (same as after Markdown), tokens ~6.5k.
+
+## Watch mode
+
+- `src/watch.ts` + `cbtg watch`: recursive `fs.watch` on the repo root; events are debounced (300 ms default) into one incremental `indexRepo` run; runs never overlap (a change during a run schedules one more); ignored folders and the graph directory are skipped so writing the graph does not trigger itself. Indexing errors are reported and watching continues. Stops on SIGINT/SIGTERM.
+- Limits: relies on platform file events (recursive `fs.watch` needs Node >= 20; unreliable on some network or container mounts); a rename is seen as a change, the cache then drops the old path on the next run.
