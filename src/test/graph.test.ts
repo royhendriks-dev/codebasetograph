@@ -105,6 +105,30 @@ test("view: HTML is self-contained and escapes hostile names", async () => {
   assert.doesNotMatch(html, /innerHTML/);
 });
 
+test("view --graph: drawn graph data is limited, deduplicated, self-contained and escapes hostile names", async () => {
+  const { renderGraphHtml, graphData } = await import("../viewGraph.js");
+  const files: Record<string, string> = { "src/</script><img src=x onerror=alert(1)>.ts": `import "./hub";`, "src/hub.ts": `export const h = 1;`, "src/lonely.ts": `export const l = 1;`, "src/miss.ts": `import "./nope";` };
+  for (let i = 0; i < 5; i++) files[`src/leaf${i}.ts`] = `import { h } from "./hub"; import { h as h2 } from "./hub";`;
+  const root = await fixture(files);
+  const { graph } = await indexRepo(root);
+  const all = graphData(graph);
+  assert.equal(all.nodes.some((n) => n.id === "src/lonely.ts"), false, "files without links are not drawn");
+  assert.equal(all.edges.filter((e) => e.from === "src/leaf0.ts" && e.to === "src/hub.ts").length, 1, "duplicate edges collapse");
+  assert.ok(all.edges.some((e) => e.evidence === "unresolved"), "unresolved links stay visible");
+  assert.ok(all.nodes.every((n) => !n.id.startsWith("pkg:")), "no package nodes");
+  const small = graphData(graph, 2);
+  assert.equal(small.shown, 2);
+  assert.ok(small.shown < small.connected, "truncation is reported");
+  assert.equal(small.nodes[0].id !== undefined && small.nodes.some((n) => n.id === "src/hub.ts"), true, "most connected file is kept");
+  const html = renderGraphHtml(graph);
+  assert.ok(!html.includes("</script><img"));
+  assert.doesNotMatch(html, /https?:\/\//);
+  assert.doesNotMatch(html, /innerHTML/);
+  const script = html.split("<script>")[1].split("</script>")[0];
+  assert.doesNotThrow(() => new Function(script), "inline script must be valid JavaScript");
+  assert.equal(graphData({ ...graph, edges: [] }).shown, 0);
+});
+
 test("java: package, imports, annotations, methods, same-package and cross-package links", async () => {
   const root = await fixture({
     "src/main/java/app/user/UserService.java": `package app.user;\nimport java.util.List;\nimport jakarta.inject.Inject;\nimport app.api.Greeter;\n@ApplicationScoped\npublic class UserService extends BaseService implements Greeter {\n  public String hello() { return ""; }\n}\n`,

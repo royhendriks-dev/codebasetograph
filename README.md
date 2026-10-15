@@ -31,6 +31,7 @@ npm install && npm run build
 node dist/cli.js index --root <repo>
 node dist/cli.js context "what you are changing" --root <repo>
 node dist/cli.js view --root <repo>   # writes .cbtg/graph.html, open it in a browser
+node dist/cli.js view --graph --root <repo>   # drawn graph: .cbtg/graph-map.html (--max-nodes n)
 npm test
 ```
 
