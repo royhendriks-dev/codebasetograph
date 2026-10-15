@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import * as path from "node:path";
 import * as vm from "node:vm";
 import { indexRepo, loadGraph } from "../build.js";
@@ -140,6 +142,18 @@ test("graph-dir: the graph can live outside the repo, which then stays untouched
   assert.equal(await loadGraph(root), undefined, "default location is untouched");
   const second = await indexRepo(root, out);
   assert.equal(second.stats.reused, 2, "incremental cache works from the custom dir");
+});
+
+test("cli: --graph-dir is honoured by index, view and queries", async () => {
+  const root = await fixture({ "src/a.ts": `export const a = 1;`, "src/b.ts": `import { a } from "./a"; export const b = a;` });
+  const out = await fs.mkdtemp(path.join(os.tmpdir(), "cbtg-cli-"));
+  const cli = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "cli.js");
+  const run = (...args: string[]) => promisify(execFile)(process.execPath, [cli, ...args, "--root", root, "--graph-dir", out]);
+  assert.match((await run("index")).stdout, /indexed 2 files/);
+  assert.match((await run("dependents", "src/a.ts")).stdout, /src\/b\.ts/);
+  assert.match((await run("view", "--graph")).stdout, /graph-map\.html/);
+  await fs.stat(path.join(out, "graph-map.html"));
+  await assert.rejects(fs.stat(path.join(root, ".cbtg")), "repo stays untouched");
 });
 
 test("java: package, imports, annotations, methods, same-package and cross-package links", async () => {
