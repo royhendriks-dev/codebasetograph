@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import * as path from "node:path";
 import * as vm from "node:vm";
 import { indexRepo, loadGraph } from "../build.js";
@@ -128,6 +130,49 @@ test("view --graph: drawn graph data is limited, deduplicated, self-contained an
   const script = html.split("<script>")[1].split("</script>")[0];
   assert.doesNotThrow(() => new vm.Script(script), "inline script must be valid JavaScript");
   assert.equal(graphData({ ...graph, edges: [] }).shown, 0);
+});
+
+test("tests are linked to their subject by naming convention (inferred), unless they import it", async () => {
+  const root = await fixture({
+    "src/foo.ts": `export const foo = 1;`, "src/foo.spec.ts": `describe("x", () => {});`,
+    "src/bar.ts": `export const bar = 1;`, "src/bar.test.ts": `import { bar } from "./bar"; bar;`,
+    "src/orphan.spec.ts": `describe("y", () => {});`,
+    "src/main/java/a/Svc.java": `package a; public class Svc {}`, "src/test/java/a/SvcTest.java": `package a; class SvcTest {}`,
+    "src/main/java/a/Dup.java": `package a; public class Dup {}`, "src/main/java/b/Dup.java": `package b; public class Dup {}`, "src/test/java/a/DupIT.java": `package a; class DupIT {}`,
+  });
+  const { graph } = await indexRepo(root);
+  const edge = (from: string, to: string) => graph.edges.filter((e) => e.from === `file:${from}` && e.to === `file:${to}`);
+  assert.equal(edge("src/foo.spec.ts", "src/foo.ts")[0]?.evidence, "inferred");
+  assert.equal(edge("src/bar.test.ts", "src/bar.ts").length, 1, "a real import is not duplicated");
+  assert.equal(edge("src/bar.test.ts", "src/bar.ts")[0].evidence, "resolved");
+  assert.equal(edge("src/test/java/a/SvcTest.java", "src/main/java/a/Svc.java")[0]?.evidence, "inferred");
+  assert.equal(graph.edges.some((e) => e.from === "file:src/orphan.spec.ts" && e.specifier === "test of"), false);
+  assert.equal(graph.edges.some((e) => e.from === "file:src/test/java/a/DupIT.java" && e.specifier === "test of"), false, "ambiguous subject: no guess");
+  assert.ok(dependents(graph, "src/foo.ts").some((e) => e.from === "file:src/foo.spec.ts"), "the test shows up as dependent");
+});
+
+test("graph-dir: the graph can live outside the repo, which then stays untouched", async () => {
+  const root = await fixture({ "src/a.ts": `export const a = 1;`, "src/b.ts": `import { a } from "./a"; export const b = a;` });
+  const out = await fs.mkdtemp(path.join(os.tmpdir(), "cbtg-out-"));
+  const first = await indexRepo(root, out);
+  assert.equal(first.stats.parsed, 2);
+  await assert.rejects(fs.stat(path.join(root, ".cbtg")), "no .cbtg inside the repo");
+  assert.ok((await loadGraph(root, out))?.files["src/b.ts"]);
+  assert.equal(await loadGraph(root), undefined, "default location is untouched");
+  const second = await indexRepo(root, out);
+  assert.equal(second.stats.reused, 2, "incremental cache works from the custom dir");
+});
+
+test("cli: --graph-dir is honoured by index, view and queries", async () => {
+  const root = await fixture({ "src/a.ts": `export const a = 1;`, "src/b.ts": `import { a } from "./a"; export const b = a;` });
+  const out = await fs.mkdtemp(path.join(os.tmpdir(), "cbtg-cli-"));
+  const cli = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "cli.js");
+  const run = (...args: string[]) => promisify(execFile)(process.execPath, [cli, ...args, "--root", root, "--graph-dir", out]);
+  assert.match((await run("index")).stdout, /indexed 2 files/);
+  assert.match((await run("dependents", "src/a.ts")).stdout, /src\/b\.ts/);
+  assert.match((await run("view", "--graph")).stdout, /graph-map\.html/);
+  await fs.stat(path.join(out, "graph-map.html"));
+  await assert.rejects(fs.stat(path.join(root, ".cbtg")), "repo stays untouched");
 });
 
 test("java: package, imports, annotations, methods, same-package and cross-package links", async () => {
