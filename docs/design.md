@@ -52,7 +52,8 @@ Per-file facts are cached by SHA-256 of content. Changed files are re-parsed, de
 
 - Parser: `web-tree-sitter` 0.25.10 (MIT) with the Java grammar from `tree-sitter-wasms` 0.1.13 (Unlicense), both pinned: newer web-tree-sitter versions failed to load these grammar files in a local check. Pure WASM, no native build.
 - Linking: an import resolves (`resolved`) when its fully-qualified type is declared in an indexed file; a static import resolves to its type. Wildcard imports are `inferred` (which classes are used is unknown). Anything else (JDK, jakarta, org.*) is an `inferred` package node. `extends`/`implements` edges exist only when the supertype resolves via an explicit import or the same package; unknown supertypes produce no edge rather than a guess.
-- Not covered: same-package use without any import or extends (no edge), usages inside method bodies (no call graph), Maven/Gradle modules, annotation processing and generated sources, Kotlin/Scala. Overloaded methods share one node id.
+- Same-package use without an import: type names used in a file are stored (`javaTypes`) and matched to types of the same package, as `references` with evidence `inferred` (a name match, not a resolved usage). Skipped when the target is already linked by import or `extends`.
+- Not covered: usages inside method bodies (no call graph), Maven/Gradle modules, annotation processing and generated sources, Kotlin/Scala. Overloaded methods share one node id.
 - Cached facts carry a parser version; facts from an older parser version are re-parsed.
 - Checked on a copy of Roy's portfolio repo (60 Java + 73 TS files): 133 files indexed in under a second, no parse errors, no unresolved own-package imports. That is a spot check, not an accuracy measurement.
 

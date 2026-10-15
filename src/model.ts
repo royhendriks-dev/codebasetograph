@@ -39,6 +39,8 @@ export interface FileFacts {
   /** Angular: simple element selector of a component declared here, and custom elements used in its (inline or html) template. */
   selectors?: string[];
   elements?: string[];
+  /** Java only: simple names of types used in this file (declared types excluded), for same-package links without an import. */
+  javaTypes?: string[];
   /** Java only: declared package. */
   javaPackage?: string;
   symbols: Array<Omit<GraphNode, "id" | "kind" | "path"> & { name: string }>;

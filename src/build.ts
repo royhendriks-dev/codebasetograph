@@ -102,6 +102,15 @@ export function link(files: Record<string, FileFacts>, aliases: Alias[] = []): {
         if (target) edges.push({ ...base, to: `file:${target}`, kind: "imports", evidence: "resolved" });
         else edges.push({ ...base, to: pkgNode(imp.specifier.split(".").slice(0, -1).join(".") || imp.specifier), kind: "imports", evidence: "inferred" });
       }
+      // same-package use needs no import: link referenced type names that match a type in the package (inferred)
+      const linked = new Set(edges.filter((e) => e.from === fileId).map((e) => e.to));
+      const prefix = f.javaPackage ? `${f.javaPackage}.` : "";
+      for (const name of f.javaTypes ?? []) {
+        const target = byFqn.get(`${prefix}${name}`);
+        if (!target || target === f.path || linked.has(`file:${target}`)) continue;
+        linked.add(`file:${target}`);
+        edges.push({ from: fileId, to: `file:${target}`, kind: "references", evidence: "inferred", specifier: name });
+      }
       continue;
     }
     for (const imp of f.imports) {
