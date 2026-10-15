@@ -3,7 +3,7 @@ import { indexRepo, loadGraph } from "./build.js";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { renderHtml } from "./view.js";
-import { context, dependencies, dependents, findSymbols, related } from "./query.js";
+import { context, dependencies, dependents, explain, findSymbols, related, resolveTarget, shortestPath } from "./query.js";
 
 const [cmd, ...rest] = process.argv.slice(2);
 const flag = (n: string) => { const i = rest.indexOf(`--${n}`); return i >= 0 ? rest[i + 1] : undefined; };
@@ -16,6 +16,8 @@ const usage = `cbtg <command> [--root dir]
   deps <file>                 what <file> imports
   dependents <file>           who imports <file>
   related <file> [--depth n]  files within n import hops
+  explain <name|path>         location, symbols and links of one file or symbol (exit 3: ambiguous, 4: not found)
+  path <from> <to>            shortest chain of resolved links between two files or symbols
   view [--out file]           write a self-contained HTML explorer (default .cbtg/graph.html)
   context "<task>" [--budget tokens]   pointer list of task-relevant code`;
 
@@ -35,6 +37,28 @@ async function main() {
     case "deps": for (const e of dependencies(g, arg)) console.log(fmt(e, "to")); break;
     case "dependents": for (const e of dependents(g, arg)) console.log(fmt(e, "from")); break;
     case "related": for (const r of related(g, arg, Number(flag("depth") ?? 1))) console.log(`${r.path} (distance ${r.distance})`); break;
+    case "explain": case "path": {
+      const inputs = cmd === "path" ? [positional[0], positional[1]] : [arg];
+      const nodes = [];
+      for (const input of inputs) {
+        const r = input ? resolveTarget(g, input) : ({ status: "none", suggestions: [] } as const);
+        if (r.status === "ambiguous") { console.error(`ambiguous: "${input}" matches several; use a path or id`); for (const c of r.candidates) console.error(`  ${c.id}`); process.exit(3); }
+        if (r.status === "none") { console.error(`not found: "${input ?? ""}"`); for (const c of r.suggestions) console.error(`  did you mean ${c.id}?`); process.exit(4); }
+        nodes.push(r.node);
+      }
+      if (cmd === "explain") {
+        const x = explain(g, nodes[0]);
+        console.log(`${x.node.kind} ${x.node.name}${x.node.detail ? ` (${x.node.detail})` : ""} ${x.node.path}${x.node.lines ? `:${x.node.lines[0]}-${x.node.lines[1]}` : ""}`);
+        for (const s of x.symbols) console.log(`  declares ${s.detail} ${s.name}:${s.lines?.[0]}`);
+        for (const e of x.outgoing) console.log(`  -> ${fmt(e, "to")}`);
+        for (const e of x.incoming) console.log(`  <- ${fmt(e, "from")}`);
+      } else {
+        const steps = shortestPath(g, nodes[0].path!, nodes[1].path!);
+        if (!steps) { console.log("no path through resolved links (inferred and unresolved links are not followed)"); process.exit(4); }
+        for (const st of steps) console.log(st.via ? `  ${st.direction} ${st.path}:${st.via.line ?? ""} [${st.via.evidence}]` : steps[0] === st ? st.path : `  ${st.path}`);
+      }
+      break;
+    }
     case "view": { const out = path.resolve(flag("out") ?? path.join(root, ".cbtg", "graph.html")); await fs.mkdir(path.dirname(out), { recursive: true }); await fs.writeFile(out, renderHtml(g)); console.log(`wrote ${out}`); break; }
     case "context": { const r = context(g, arg, Number(flag("budget") ?? 800)); console.log(r.text); if (r.truncated) console.log("(truncated by budget)"); break; }
     default: console.log(usage);
