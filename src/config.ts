@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { LineCounter, type Document, isMap, isScalar, isSeq, parseAllDocuments, type Node as YNode } from "yaml";
 import type { FileFacts } from "./model.js";
 
-export const CONFIG_PARSER_VERSION = "config-6";
+export const CONFIG_PARSER_VERSION = "config-7";
 
 type Symbols = FileFacts["symbols"];
 type Imports = FileFacts["imports"];
@@ -101,6 +101,40 @@ function parseMarkdown(relPath: string, text: string, symbols: Symbols, imports:
       imports.push({ specifier: spec, names: ["link"], line: i + 1, reexport: false, dynamic: false, ref: "doc" });
     }
   });
+}
+
+/** package.json: dependency names (any section) and script names. Versions and script commands are not kept. */
+function parsePackageJson(text: string, symbols: Symbols, imports: Imports): void {
+  const j = asObj(JSON.parse(text));
+  if (!j) return;
+  const lineOf = (key: string) => Math.max(1, text.slice(0, Math.max(0, text.indexOf(`"${key}"`))).split("\n").length);
+  for (const section of ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]) {
+    for (const name of Object.keys(asObj(j[section]) ?? {})) imports.push({ specifier: name, names: [section], line: lineOf(name), reexport: false, dynamic: false, ref: "npm" });
+  }
+  for (const name of Object.keys(asObj(j.scripts) ?? {}).slice(0, 100)) symbols.push({ name: `script:${name}`, detail: "npm script", lines: [lineOf(name), lineOf(name)] });
+}
+
+/** pom.xml by regex (not an XML parser): own artifactId, `<module>` paths and dependency coordinates. Properties are not resolved. */
+function parsePom(relPath: string, text: string, symbols: Symbols, imports: Imports): void {
+  const xml = text.replace(/<!--[\s\S]*?-->/g, (c) => c.replace(/[^\n]/g, " "));
+  const lineAt = (i: number) => xml.slice(0, i).split("\n").length;
+  const head = xml.replace(/<(parent|dependencies|dependencyManagement|build|profiles|reporting)>[\s\S]*?<\/\1>/g, (c) => c.replace(/[^\n]/g, " "));
+  const own = /<artifactId>\s*([^<\s]+)\s*<\/artifactId>/.exec(head);
+  if (own) symbols.push({ name: own[1], detail: "maven artifact", lines: [lineAt(own.index), lineAt(own.index)] });
+  const dir = path.posix.dirname(relPath);
+  for (const m of xml.matchAll(/<module>\s*([^<\s]+)\s*<\/module>/g)) {
+    const target = m[1].endsWith(".xml") ? m[1] : `${m[1]}/pom.xml`;
+    imports.push({ specifier: path.posix.normalize(path.posix.join(dir, target)), names: ["module"], line: lineAt(m.index!), reexport: false, dynamic: false, ref: "path" });
+  }
+  const seen = new Set<string>();
+  for (const m of xml.matchAll(/<dependency>([\s\S]*?)<\/dependency>/g)) {
+    const g = /<groupId>\s*([^<\s]+)\s*<\/groupId>/.exec(m[1])?.[1], a = /<artifactId>\s*([^<\s]+)\s*<\/artifactId>/.exec(m[1])?.[1];
+    if (!a || a.includes("${")) continue;
+    const spec = g && !g.includes("${") ? `${g}:${a}` : a;
+    if (seen.has(spec)) continue;
+    seen.add(spec);
+    imports.push({ specifier: spec, names: ["dependency"], line: lineAt(m.index!), reexport: false, dynamic: false, ref: "maven" });
+  }
 }
 
 function collectImages(v: unknown, out: string[], depth = 0): void {
@@ -230,6 +264,8 @@ export function parseConfig(relPath: string, text: string): FileFacts {
     const base = path.posix.basename(relPath);
     if (/^Dockerfile/.test(base)) parseDockerfile(text, facts.symbols, facts.imports);
     else if (base.endsWith(".conf")) parseNginx(text, facts.symbols);
+    else if (base === "package.json") parsePackageJson(text, facts.symbols, facts.imports);
+    else if (base === "pom.xml") parsePom(relPath, text, facts.symbols, facts.imports);
     else if (base.endsWith(".md")) parseMarkdown(relPath, text, facts.symbols, facts.imports);
     else if (base.endsWith(".properties") || /^\.env/.test(base)) parseKeys(text, facts.symbols);
     else if (base.endsWith(".sql")) parseSql(text, facts.symbols);

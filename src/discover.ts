@@ -8,7 +8,7 @@ const DEFAULT_IGNORED_DIRS = new Set([
 const EXTS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".java", ".yml", ".yaml", ".sql", ".conf", ".properties", ".md", ".html", ".scss", ".css"]);
 /** `.env.example` style templates only: a real `.env` is never indexed. */
 const ENV_TEMPLATE = /^\.env(\.[\w-]+)?\.(example|sample|template)$/;
-const isIndexable = (name: string) => EXTS.has(path.extname(name)) || /^Dockerfile(\.[\w.-]+)?$/.test(name) || ENV_TEMPLATE.test(name);
+const isIndexable = (name: string) => EXTS.has(path.extname(name)) || /^(package\.json|pom\.xml)$/.test(name) || /^Dockerfile(\.[\w.-]+)?$/.test(name) || ENV_TEMPLATE.test(name);
 const MAX_BYTES = 1_000_000;
 
 /** Minimal .gitignore support: plain names, `dir/`, `*.ext`, `/anchored`. Negation is not supported. */
