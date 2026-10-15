@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { indexRepo, loadGraph } from "./build.js";
+import { graphDirOf, indexRepo, loadGraph } from "./build.js";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { renderHtml } from "./view.js";
@@ -11,9 +11,10 @@ import { context, dependencies, dependents, explain, findSymbols, related, resol
 const [cmd, ...rest] = process.argv.slice(2);
 const flag = (n: string) => { const i = rest.indexOf(`--${n}`); return i >= 0 ? rest[i + 1] : undefined; };
 const root = flag("root") ?? process.cwd();
+const graphDir = flag("graph-dir");
 const positional = rest.filter((a, i) => !a.startsWith("--") && !(rest[i - 1] ?? "").startsWith("--"));
 
-const usage = `cbtg <command> [--root dir]
+const usage = `cbtg <command> [--root dir] [--graph-dir dir]   (--graph-dir keeps the graph outside the repo, which then stays untouched)
   index                       build or update .cbtg/graph.json
   find <term>                 symbols and files whose name contains term
   deps <file>                 what <file> imports
@@ -28,11 +29,11 @@ const usage = `cbtg <command> [--root dir]
 
 async function main() {
   if (cmd === "index") {
-    const { stats, graph } = await indexRepo(root);
+    const { stats, graph } = await indexRepo(root, graphDir);
     console.log(`indexed ${stats.files} files (parsed ${stats.parsed}, reused ${stats.reused}, removed ${stats.removed}); ${graph.nodes.length} nodes, ${graph.edges.length} edges, ${graph.skipped.length} skipped`);
     return;
   }
-  const g = await loadGraph(root);
+  const g = await loadGraph(root, graphDir);
   if (!g) { console.error("no graph found; run `cbtg index` first"); process.exit(1); }
   const arg = positional[0] ?? "";
   const synonyms = async () => (flag("synonyms") ? loadSynonyms(path.resolve(flag("synonyms")!)) : {});
@@ -67,7 +68,7 @@ async function main() {
     }
     case "view": {
       const map = process.argv.includes("--graph");
-      const out = path.resolve(flag("out") ?? path.join(root, ".cbtg", map ? "graph-map.html" : "graph.html"));
+      const out = path.resolve(flag("out") ?? path.join(graphDirOf(root, graphDir), map ? "graph-map.html" : "graph.html"));
       const max = Number(flag("max-nodes") ?? DEFAULT_MAX_NODES);
       if (!Number.isInteger(max) || max < 1) { console.error("--max-nodes must be a positive integer"); process.exit(2); }
       await fs.mkdir(path.dirname(out), { recursive: true });
