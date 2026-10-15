@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { LineCounter, type Document, isMap, isScalar, isSeq, parseAllDocuments, type Node as YNode } from "yaml";
 import type { FileFacts } from "./model.js";
 
-export const CONFIG_PARSER_VERSION = "config-2";
+export const CONFIG_PARSER_VERSION = "config-3";
 
 type Symbols = FileFacts["symbols"];
 type Imports = FileFacts["imports"];
