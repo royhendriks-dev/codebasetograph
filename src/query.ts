@@ -12,11 +12,11 @@ export function findSymbols(g: Graph, term: string, limit = 20): GraphNode[] {
 }
 
 export function dependencies(g: Graph, path: string): GraphEdge[] {
-  return g.edges.filter((e) => e.from === fileId(path) && (e.kind === "imports" || e.kind === "reexports"));
+  return g.edges.filter((e) => e.from === fileId(path) && (e.kind === "imports" || e.kind === "reexports" || e.kind === "references"));
 }
 
 export function dependents(g: Graph, path: string): GraphEdge[] {
-  return g.edges.filter((e) => e.to === fileId(path) && (e.kind === "imports" || e.kind === "reexports"));
+  return g.edges.filter((e) => e.to === fileId(path) && (e.kind === "imports" || e.kind === "reexports" || e.kind === "references"));
 }
 
 /** Bounded breadth-first walk over resolved import edges, in both directions. */

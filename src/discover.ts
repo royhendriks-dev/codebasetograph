@@ -5,7 +5,8 @@ const DEFAULT_IGNORED_DIRS = new Set([
   ".git", "node_modules", "dist", "build", "out", "coverage", ".angular", ".next", ".nx",
   ".cache", ".cbtg", "tmp", ".turbo", "target", ".gradle", ".idea",
 ]);
-const EXTS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".java"]);
+const EXTS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".java", ".yml", ".yaml"]);
+const isDockerfile = (name: string) => /^Dockerfile(\.[\w.-]+)?$/.test(name);
 const MAX_BYTES = 1_000_000;
 
 /** Minimal .gitignore support: plain names, `dir/`, `*.ext`, `/anchored`. Negation is not supported. */
@@ -55,7 +56,7 @@ export async function discover(root: string): Promise<Discovered> {
         if (DEFAULT_IGNORED_DIRS.has(e.name) || ignored(rel, true)) continue;
         await walk(rel);
       } else if (e.isFile()) {
-        if (!EXTS.has(path.extname(e.name)) || ignored(rel, false)) continue;
+        if (!(EXTS.has(path.extname(e.name)) || isDockerfile(e.name)) || ignored(rel, false)) continue;
         if (/\.d\.[cm]?ts$/.test(e.name) || /\.min\.[cm]?js$/.test(e.name)) {
           skipped.push({ path: rel, reason: "generated/declaration file" });
           continue;

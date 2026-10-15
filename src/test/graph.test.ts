@@ -156,3 +156,71 @@ test("context ranking: source ranks above specs; stopwords ignored; exported sym
   const { isTestPath } = await import("../query.js");
   assert.ok(isTestPath("a/b.spec.ts") && isTestPath("tests/e2e/auth.ts") && !isTestPath("src/auth.ts"));
 });
+
+const infra = {
+  ".github/workflows/ci.yml": `name: ci\non: [push]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: ./.github/actions/setup\n  deploy:\n    needs: build\n    uses: ./.github/workflows/deploy.yml\n`,
+  ".github/workflows/deploy.yml": `on: workflow_call\njobs:\n  go:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ./.github/actions/missing\n`,
+  ".github/actions/setup/action.yml": `name: setup\nruns:\n  using: composite\n  steps:\n    - uses: actions/setup-node@v4\n`,
+  "docker-compose.yml": `services:\n  api:\n    build:\n      context: ./backend\n      dockerfile: Dockerfile.dev\n    image: ghcr.io/x/api:1.2\n  web:\n    build: ./frontend\n    env_file: .env\n`,
+  "backend/Dockerfile.dev": `FROM node:20\n`,
+  "frontend/Dockerfile": `FROM nginx\n`,
+  "k8s/config.yaml": `apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app-config\n---\napiVersion: v1\nkind: Service\nmetadata:\n  name: web\nspec:\n  selector:\n    app: web\n`,
+  "k8s/deploy.yaml": `apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\nspec:\n  template:\n    metadata:\n      labels:\n        app: web\n    spec:\n      serviceAccountName: web-sa\n      containers:\n        - name: web\n          image: nginx:1.27\n          envFrom:\n            - configMapRef:\n                name: app-config\n            - secretRef:\n                name: app-secret\n`,
+  "k8s/ingress.yaml": `apiVersion: networking.k8s.io/v1\nkind: Ingress\nmetadata:\n  name: web\nspec:\n  rules:\n    - http:\n        paths:\n          - backend:\n              service:\n                name: web\n`,
+  "k8s/kustomization.yaml": `resources:\n  - config.yaml\n  - deploy.yaml\n  - missing.yaml\n`,
+  "data/i18n.yml": `hello: world\n`,
+  "bad.yml": `a: [unclosed\n  b: {`,
+};
+
+test("yaml: GitHub Actions, compose, Kubernetes and kustomize produce evidence-labelled references", async () => {
+  const root = await fixture(infra);
+  const { graph } = await indexRepo(root);
+  const edge = (from: string, label: string) => graph.edges.find((e) => e.from === `file:${from}` && e.specifier === label && e.kind === "references");
+  // symbols
+  assert.ok(graph.nodes.some((n) => n.id === "sym:.github/workflows/ci.yml#build" && n.detail === "job"));
+  assert.ok(graph.nodes.some((n) => n.id === "sym:k8s/deploy.yaml#Deployment/web"));
+  assert.ok(graph.nodes.some((n) => n.id === "sym:docker-compose.yml#api" && n.detail === "service"));
+  // actions
+  assert.deepEqual([edge(".github/workflows/ci.yml", "./.github/actions/setup")?.to, edge(".github/workflows/ci.yml", "./.github/actions/setup")?.evidence], ["file:.github/actions/setup/action.yml", "resolved"]);
+  assert.equal(edge(".github/workflows/ci.yml", "./.github/workflows/deploy.yml")?.evidence, "resolved");
+  assert.equal(edge(".github/workflows/ci.yml", "actions/checkout@v4")?.evidence, "inferred");
+  assert.equal(edge(".github/workflows/deploy.yml", "./.github/actions/missing")?.evidence, "unresolved");
+  // compose
+  assert.equal(edge("docker-compose.yml", "api build")?.to, "file:backend/Dockerfile.dev");
+  assert.equal(edge("docker-compose.yml", "web build")?.to, "file:frontend/Dockerfile");
+  assert.equal(edge("docker-compose.yml", "ghcr.io/x/api:1.2")?.to, "pkg:image:ghcr.io/x/api");
+  assert.ok(!graph.edges.some((e) => /\.env/.test(e.specifier ?? "")), "env_file (secrets) is never followed");
+  // kubernetes
+  assert.deepEqual([edge("k8s/deploy.yaml", "ConfigMap/app-config")?.to, edge("k8s/deploy.yaml", "ConfigMap/app-config")?.evidence], ["file:k8s/config.yaml", "resolved"]);
+  assert.equal(graph.edges.find((e) => e.from === "file:k8s/deploy.yaml" && e.to === "pkg:k8s:Secret/app-secret")?.evidence, "unresolved");
+  assert.equal(graph.edges.find((e) => e.from === "file:k8s/deploy.yaml" && e.to === "pkg:k8s:ServiceAccount/web-sa")?.evidence, "unresolved");
+  assert.equal(graph.edges.find((e) => e.from === "file:k8s/config.yaml" && e.to === "file:k8s/deploy.yaml")?.evidence, "resolved"); // Service selector -> Deployment labels
+  assert.equal(graph.edges.find((e) => e.from === "file:k8s/ingress.yaml" && e.to === "file:k8s/config.yaml")?.evidence, "resolved");
+  assert.equal(edge("k8s/kustomization.yaml", "deploy.yaml")?.to, "file:k8s/deploy.yaml");
+  assert.equal(edge("k8s/kustomization.yaml", "missing.yaml")?.evidence, "unresolved");
+  // noise and safety
+  assert.ok(graph.skipped.some((s) => s.path === "data/i18n.yml" && /not a recognised/.test(s.reason)));
+  assert.ok(!("data/i18n.yml" in graph.files));
+  assert.ok(graph.skipped.some((s) => s.path === "bad.yml"));
+  assert.ok(dependents(graph, "backend/Dockerfile.dev").length === 1);
+});
+
+test("yaml: unindexed-but-present references add no false unresolved edge; same name twice is inferred; edits refresh links", async () => {
+  const root = await fixture({
+    "k8s/kustomization.yaml": `resources:\n  - extra.yaml\n  - a.yaml\n`,
+    "k8s/extra.yaml": `just: data\n`,
+    "k8s/a.yaml": `apiVersion: v1\nkind: Pod\nmetadata:\n  name: p\nspec:\n  containers:\n    - name: c\n      image: x\n      envFrom:\n        - configMapRef:\n            name: shared\n`,
+    "env1/cm.yaml": `apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: shared\n`,
+    "env2/cm.yaml": `apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: shared\n`,
+  });
+  let g = (await indexRepo(root)).graph;
+  assert.ok(!g.edges.some((e) => e.specifier === "extra.yaml"));
+  const shared = g.edges.filter((e) => e.from === "file:k8s/a.yaml" && e.specifier === "ConfigMap/shared");
+  assert.deepEqual(shared.map((e) => e.evidence), ["inferred", "inferred"]);
+  await fs.rm(path.join(root, "env2/cm.yaml"));
+  g = (await indexRepo(root)).graph;
+  assert.deepEqual(g.edges.filter((e) => e.specifier === "ConfigMap/shared").map((e) => e.evidence), ["resolved"]);
+  // a Dockerfile is a file node and a YAML parse never throws on hostile input
+  const { parseYaml } = await import("../yaml.js");
+  assert.equal(parseYaml("x.yml", "a: &a [*a]\n"), undefined);
+});

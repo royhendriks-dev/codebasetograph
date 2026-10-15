@@ -2,6 +2,8 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { discover } from "./discover.js";
 import { parseFile, TS_PARSER_VERSION } from "./parse.js";
+import { OTHER_PARSER_VERSION, parseOther, parseYaml, YAML_PARSER_VERSION } from "./yaml.js";
+import { linkRefs } from "./yaml-link.js";
 import { parseJava, JAVA_PARSER_VERSION } from "./java.js";
 import type { FileFacts, Graph, GraphEdge, GraphNode } from "./model.js";
 
@@ -89,6 +91,12 @@ export function link(files: Record<string, FileFacts>): { nodes: GraphNode[]; ed
   return { nodes: [...nodes.values()], edges };
 }
 
+function mergeLinks(a: { nodes: GraphNode[]; edges: GraphEdge[] }, b: { nodes: GraphNode[]; edges: GraphEdge[] }) {
+  const nodes = new Map(a.nodes.map((n) => [n.id, n]));
+  for (const n of b.nodes) if (!nodes.has(n.id)) nodes.set(n.id, n);
+  return { nodes: [...nodes.values()], edges: [...a.edges, ...b.edges] };
+}
+
 export interface IndexStats { parsed: number; reused: number; removed: number; files: number }
 
 /** Indexes `root`. Re-parses only files whose content hash changed; links are always rebuilt. */
@@ -98,6 +106,7 @@ export async function indexRepo(root: string): Promise<{ graph: Graph; stats: In
   const { files: found, skipped } = await discover(root);
   const files: Record<string, FileFacts> = {};
   let parsed = 0, reused = 0;
+  const present = new Set<string>(); // yaml files that exist but are not indexed
   for (const rel of found) {
     let text: string;
     try { text = await fs.readFile(path.join(root, rel), "utf8"); }
@@ -105,13 +114,18 @@ export async function indexRepo(root: string): Promise<{ graph: Graph; stats: In
     const { createHash } = await import("node:crypto");
     const hash = createHash("sha256").update(text).digest("hex");
     const prev = previous?.files[rel];
-    const isJava = rel.endsWith(".java");
-    const parserVersion = isJava ? JAVA_PARSER_VERSION : TS_PARSER_VERSION;
-    if (prev && prev.hash === hash && prev.parser === parserVersion) { files[rel] = prev; reused++; }
-    else { files[rel] = isJava ? await parseJava(rel, text) : parseFile(rel, text); parsed++; }
+    const isJava = rel.endsWith(".java"), isYaml = /\.ya?ml$/.test(rel), isDocker = /(^|\/)Dockerfile[^/]*$/.test(rel);
+    const parserVersion = isJava ? JAVA_PARSER_VERSION : isYaml ? YAML_PARSER_VERSION : isDocker ? OTHER_PARSER_VERSION : TS_PARSER_VERSION;
+    if (prev && prev.hash === hash && prev.parser === parserVersion) { files[rel] = prev; reused++; continue; }
+    parsed++;
+    if (isYaml) {
+      let y: FileFacts | undefined;
+      try { y = parseYaml(rel, text); } catch { y = undefined; }
+      if (y) files[rel] = y; else { skipped.push({ path: rel, reason: "yaml: not a recognised CI, compose or Kubernetes file" }); present.add(rel); }
+    } else files[rel] = isDocker ? parseOther(rel, text) : isJava ? await parseJava(rel, text) : parseFile(rel, text);
   }
   const removed = previous ? Object.keys(previous.files).filter((p) => !(p in files)).length : 0;
-  const graph: Graph = { version: 1, root: path.basename(root), files, ...link(files), skipped };
+  const graph: Graph = { version: 1, root: path.basename(root), files, ...mergeLinks(link(files), linkRefs(files, present)), skipped };
   const dir = path.join(root, GRAPH_DIR);
   await fs.mkdir(dir, { recursive: true });
   const tmp = path.join(dir, GRAPH_FILE + ".tmp");

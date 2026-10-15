@@ -46,6 +46,15 @@ Language choice: TypeScript/Node, because the TS compiler API is the most accura
 
 Per-file facts are cached by SHA-256 of content. Changed files are re-parsed, deleted files dropped, and cross-file links are **always recomputed from all facts**. This costs little and removes the class of stale-edge bugs. A corrupt or unknown-version graph file is ignored and rebuilt. Writes go through a temp file and rename.
 
+## YAML and CI/infra files
+
+- Parser: `yaml` 2.8.1 (ISC, pure JS, pinned). It only parses; no tags run, alias count is capped. Only recognised kinds are indexed, other YAML is listed under `skipped` ("not a recognised ...") so data files add no noise nodes. Dockerfiles are indexed as plain file nodes so references to them resolve.
+- GitHub Actions (`.github/`): jobs as symbols; local `uses` (actions, reusable workflows) are `resolved` file edges, external actions are `inferred` `action:<owner>/<repo>` packages.
+- Docker Compose: services as symbols; `build` context/dockerfile to a Dockerfile (`resolved`), `image` as `inferred` `image:<name>`. `env_file` is deliberately not followed (secrets).
+- Kubernetes: `Kind/name` symbols; references from pod specs to ConfigMap, Secret, PersistentVolumeClaim and ServiceAccount, Ingress to Service, HPA to its target, Service selector to workloads with matching pod labels (`resolved`). A named object that is not in the repo is `unresolved`; the same name in several files is `inferred`. Namespaces are ignored.
+- kustomization: `resources`, `bases`, `components`, `patches` as file edges.
+- Not done: Helm templates (not valid YAML, skipped), GitLab CI, Terraform, `depends_on`/`needs` ordering, namespaces, image-to-Dockerfile links. Checked only on synthetic fixtures; no real-repo run yet.
+
 ## Java (added after the first skeleton)
 
 - Parser: `web-tree-sitter` 0.25.10 (MIT) with the Java grammar from `tree-sitter-wasms` 0.1.13 (Unlicense), both pinned: newer web-tree-sitter versions failed to load these grammar files in a local check. Pure WASM, no native build.
