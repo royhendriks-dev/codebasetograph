@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { discover } from "./discover.js";
 import { context } from "./query.js";
+import { taskWords } from "./words.js";
 import type { Graph } from "./model.js";
 
 /** One benchmark task: a natural-language task plus the files a human says are relevant (the ground truth). */
@@ -22,10 +23,8 @@ export interface ApproachResult {
 }
 
 export interface BenchRow { id: string; task: string; baseline: ApproachResult; graph: ApproachResult }
-export interface BenchOptions { maxFiles?: number; budget?: number }
+export interface BenchOptions { maxFiles?: number; budget?: number; synonyms?: Record<string, string[]> }
 
-const STOP = new Set(["the", "and", "for", "how", "what", "where", "with", "from", "that", "this", "een", "het", "van", "voor", "met", "hoe"]);
-const words = (task: string) => [...new Set(task.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !STOP.has(w)))];
 const tokensOf = (text: string) => Math.ceil(text.length / 4);
 
 function score(files: string[], relevant: string[]) {
@@ -48,8 +47,8 @@ async function measure(root: string, files: string[], lookupText: string, ms: nu
  * Conventional baseline: a case-insensitive text search for every task word over the same indexable files
  * (what an agent does with grep), then open the files with the most matches. No graph, no ranking beyond match count.
  */
-export async function baselineSearch(root: string, task: string, maxFiles: number): Promise<{ files: string[]; output: string }> {
-  const ws = words(task);
+export async function baselineSearch(root: string, task: string, maxFiles: number, synonyms: Record<string, string[]> = {}): Promise<{ files: string[]; output: string }> {
+  const ws = taskWords(task, synonyms); // same word list as the graph side, so the comparison stays like for like
   const { files } = await discover(root);
   const counts: Array<[string, number]> = [];
   const out: string[] = [];
@@ -69,10 +68,10 @@ export async function runBenchmark(root: string, g: Graph, tasks: BenchTask[], o
   const rows: BenchRow[] = [];
   for (const t of tasks) {
     let t0 = performance.now();
-    const b = await baselineSearch(root, t.task, maxFiles);
+    const b = await baselineSearch(root, t.task, maxFiles, opts.synonyms);
     const baseline = await measure(root, b.files, b.output, performance.now() - t0, t.relevant);
     t0 = performance.now();
-    const c = context(g, t.task, budget);
+    const c = context(g, t.task, budget, opts.synonyms);
     const gms = performance.now() - t0;
     const gfiles = [...new Set(c.items.map((i) => i.path))].filter((p) => p in g.files).slice(0, maxFiles);
     const graph = await measure(root, gfiles, c.text, gms, t.relevant);

@@ -132,6 +132,34 @@ test("view --graph: drawn graph data is limited, deduplicated, self-contained an
   assert.equal(graphData({ ...graph, edges: [] }).shown, 0);
 });
 
+test("dutch tasks: stop words are dropped and a glossary plus user synonyms map Dutch words to code words", async () => {
+  const { taskWords, loadSynonyms } = await import("../words.js");
+  assert.deepEqual(taskWords("de gebruiker wil inloggen"), ["gebruiker", "inloggen", "user", "login"]);
+  assert.ok(taskWords("Wijzig het wachtwoord").includes("password"));
+  assert.ok(taskWords("limiet instellen", { limiet: ["limiter"] }).includes("limiter"), "user synonyms are added");
+  const root = await fixture({
+    "src/login.ts": `export class LoginForm {}`, "src/limiter.ts": `export class Limiter {}`,
+    "src/zzz.ts": `export const x = 1;`, "syn.json": `{ "begrenzing": ["limiter"] }`, "bad.json": `{ "a": "x" }`, "arr.json": `[]`,
+  });
+  const { graph } = await indexRepo(root);
+  assert.equal(context(graph, "hoe kan een gebruiker inloggen", 800).items[0].path, "src/login.ts");
+  assert.equal(context(graph, "begrenzing aanpassen", 800, await loadSynonyms(path.join(root, "syn.json"))).items[0].path, "src/limiter.ts");
+  await assert.rejects(loadSynonyms(path.join(root, "bad.json")), /array of strings/);
+  await assert.rejects(loadSynonyms(path.join(root, "arr.json")), /JSON object/);
+});
+
+test("cli: context --synonyms and bench --synonyms", async () => {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const root = await fixture({ "src/limiter.ts": `export class Limiter {}`, "src/zzz.ts": `export const x = 1;`, "syn.json": `{ "begrenzing": ["limiter"] }`,
+    "tasks.json": `[{"id":"t","task":"begrenzing aanpassen","relevant":["src/limiter.ts"]}]` });
+  const cli = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "cli.js");
+  const run = (...args: string[]) => promisify(execFile)(process.execPath, [cli, ...args, "--root", root, "--synonyms", path.join(root, "syn.json")]);
+  await run("index");
+  assert.match((await run("context", "begrenzing aanpassen")).stdout, /src\/limiter\.ts/);
+  assert.match((await run("bench", path.join(root, "tasks.json"))).stdout, /\| t \| graph context \| 1 \|.*\| 100% \|/);
+});
+
 test("tests are linked to their subject by naming convention (inferred), unless they import it", async () => {
   const root = await fixture({
     "src/foo.ts": `export const foo = 1;`, "src/foo.spec.ts": `describe("x", () => {});`,

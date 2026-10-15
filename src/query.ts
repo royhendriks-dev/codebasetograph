@@ -1,4 +1,5 @@
 import type { Graph, GraphEdge, GraphNode } from "./model.js";
+import { taskWords } from "./words.js";
 
 const fileId = (p: string) => `file:${p}`;
 
@@ -40,7 +41,6 @@ export function related(g: Graph, path: string, depth = 1): Array<{ path: string
   return [...seen].filter(([p]) => p !== path).map(([p, distance]) => ({ path: p, distance }));
 }
 
-const STOPWORDS = new Set(["the", "and", "for", "how", "what", "where", "with", "from", "that", "this", "change", "fix", "add", "use", "een", "het", "van", "voor", "met", "hoe"]);
 
 /** Spec/test files are rarely the file to edit first; they still match, but rank lower. */
 export function isTestPath(p: string): boolean {
@@ -73,8 +73,8 @@ export interface ContextItem { path: string; lines?: [number, number]; why: stri
  * and stop when the budget (approximate token count of the rendered text) is reached.
  * Output is a pointer list, not source code: the agent must still open the files it needs.
  */
-export function context(g: Graph, task: string, budgetTokens = 800): { text: string; items: ContextItem[]; truncated: boolean } {
-  const words = [...new Set(task.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !STOPWORDS.has(w)))];
+export function context(g: Graph, task: string, budgetTokens = 800, synonyms: Record<string, string[]> = {}): { text: string; items: ContextItem[]; truncated: boolean } {
+  const words = taskWords(task, synonyms);
   const score = new Map<string, number>();
   const items: ContextItem[] = [];
   for (const n of g.nodes) {
