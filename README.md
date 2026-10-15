@@ -54,6 +54,15 @@ Jira tickets and Confluence pages are written in Dutch, in the same format as th
 
 `cbtg watch [--root dir] [--graph-dir dir] [--debounce ms]` indexes once and then re-indexes (incrementally: only changed files are parsed) after every file change, until Ctrl+C. Changes inside `.git`, `node_modules`, build output and the graph directory are ignored; runs never overlap. It uses `fs.watch` with `recursive`, which needs Node 20 or newer; on a network drive or in some containers file events can be missing, then re-run `cbtg index`.
 
+## Letting an agent use it automatically
+
+Two optional entry points, both read-only (they only read the graph, never run or write repository code). Run `cbtg index` first; both read `.cbtg/graph.json` of the current directory (or pass `--root`/`--graph-dir`).
+
+- **MCP server** (any MCP client): `cbtg mcp` speaks JSON-RPC over stdio and offers `cbtg_context`, `cbtg_find`, `cbtg_deps`, `cbtg_dependents`, `cbtg_related`, `cbtg_explain` and `cbtg_path`. For Claude Code: `claude mcp add cbtg -- node ~/tools/codebasetograph/dist/cli.js mcp`. The graph is re-read on every call, so a new `cbtg index` is picked up without a restart.
+- **Prompt hook** (Claude Code): `cbtg hook` reads the `UserPromptSubmit` hook JSON on stdin and prints pointers for the prompt as `additionalContext`; with no graph, a prompt under 3 words or no match it prints nothing. In `.claude/settings.json`: `{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"node ~/tools/codebasetograph/dist/cli.js hook"}]}]}}`.
+
+Tested here with JSON-RPC lines and hook JSON in the test suite; not yet tried against a live Claude Code session. Output is labelled as pointers, not instructions.
+
 ## CI and quality checks
 
 `.github/workflows/ci.yml` runs on every pull request and on pushes to `main`: build, tests, a coverage gate of 80% (lines, branches, functions; `npm run test:coverage`) and a SonarCloud scan that waits for the quality gate. The scan needs the repository secret `SONAR_TOKEN`.

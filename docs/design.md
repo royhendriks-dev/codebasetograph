@@ -64,6 +64,8 @@ Per-file facts are cached by SHA-256 of content. Changed files are re-parsed, de
 - Tests: `foo.spec.ts`/`foo.test.ts` link to `foo.ts` next to it, `FooTest.java`/`FooTests.java`/`FooIT.java` to the unique `Foo.java` (`references`, `inferred`, specifier `test of`; skipped when the test already imports its subject or the name is ambiguous). A convention, not proof.
 - Kustomize: `resources`/`bases`/`components`/`patches` are `references` to local files (a directory points at its `kustomization.yaml`; remote URLs are skipped). Kubernetes `secretKeyRef`/`configMapRef`/`volumes`/`serviceAccountName` link to the file declaring that `Kind/name`: `inferred` when exactly one other file declares it (namespace is not checked), `unresolved` when none does (e.g. created outside the repo), no edge when ambiguous. Interpolated images: `${VAR:-default}` uses the default, anything else is skipped; a compose service with `build` has no image edge.
 - Not covered: Helm templates and Kustomize generators/transformers (templated YAML may be flagged `parseError`), `depends_on`/service-to-service links, linking an image to the compose service or k8s manifest that builds it, Gradle files, SQL beyond CREATE statements.
+
+- Not covered: Helm templates and Kustomize generators/transformers (templated YAML may be flagged `parseError`), linking an image to the compose service or k8s manifest that builds it, `package.json`/`pom.xml` dependency lists, SQL beyond CREATE statements.
 - Security: YAML is parsed only; the parser is pinned to a version without the nested-collection stack-overflow advisory found by `npm audit` in 2.8.x, and a parse crash is caught and recorded as `parseError`.
 
 ## tsconfig aliases and Angular links
@@ -103,6 +105,20 @@ Per-file facts are cached by SHA-256 of content. Changed files are re-parsed, de
 - `package.json`: dependency names (all four sections) become `imports` edges to the same `pkg:<name>` node TS imports use, evidence `extracted` (read straight from the file, not resolved). Scripts become symbols (`script:build`); versions and script commands are never stored. `workspaces` globs are not expanded.
 - `pom.xml` (regex, not an XML parser, comments stripped): own artifactId as symbol, `<module>` as path reference to the child `pom.xml` (resolved or unresolved), `<dependency>` as `groupId:artifactId`. A dependency whose artifactId is declared by exactly one other pom in the repo links to that file (`inferred`: name match); others become `pkg:maven:<g>:<a>` (`extracted`). Dependencies with `${...}` properties are skipped; parent poms are not followed. Parser `config-7`.
 - Ranking: npm scripts and maven artifacts count x0.3 (names like `test`/`build` match too many tasks). 30-task portfolio benchmark: recall 70% (same as after Markdown), tokens ~6.5k.
+
+## Infra links (compose, Kubernetes)
+
+- compose `depends_on` (list or map): an edge between the two service symbols in the same file (`references`, `resolved`, specifier `depends_on`). Unknown service names give no edge.
+- Kubernetes: an Ingress `backend` service name and a HorizontalPodAutoscaler `scaleTargetRef` become object references like Secrets already are (`inferred` when one file declares that `Kind/name`, `unresolved` when none does).
+- A Service links to workloads in another file whose pod template labels contain all of its `selector` labels (Deployment, StatefulSet, DaemonSet, Job, CronJob; `inferred`: namespaces are ignored). A Service and workload in the same file get no file edge. Parser `config-8`.
+- Not done: Helm and kustomize generators, NetworkPolicy selectors, image to manifest. 30-task portfolio benchmark unchanged (70%).
+
+## Agent access (`mcp`, `hook`)
+
+- `src/agent.ts`: a hand-written MCP server over stdio (JSON-RPC 2.0, newline-delimited; `initialize`, `ping`, `tools/list`, `tools/call`) so there is no SDK dependency. Seven read-only tools wrap the query functions; the graph is loaded per call. Unknown methods and bad JSON get JSON-RPC errors.
+- `cbtg hook`: Claude Code `UserPromptSubmit` hook; prompt -> `context` (400 token budget) -> `additionalContext`. Silent (empty output, exit 0) on any problem so it can never block a prompt.
+- Every tool and hook output ends with a note that graph output is pointers, not instructions (names in the graph come from untrusted repository text).
+- Not verified: behaviour in a live MCP client or Claude Code session; only the protocol messages are tested. No token saving is claimed for the hook: it adds context to every prompt, so its value has to be measured (agent benchmark).
 
 ## Watch mode
 

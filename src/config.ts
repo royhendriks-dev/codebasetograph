@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { LineCounter, type Document, isMap, isScalar, isSeq, parseAllDocuments, type Node as YNode } from "yaml";
 import type { FileFacts } from "./model.js";
 
-export const CONFIG_PARSER_VERSION = "config-7";
+export const CONFIG_PARSER_VERSION = "config-8";
 
 type Symbols = FileFacts["symbols"];
 type Imports = FileFacts["imports"];
@@ -150,22 +150,56 @@ const objRef = (kind: string, name: unknown, line: number, via: string, imports:
   if (typeof name === "string" && name && !name.includes("$")) imports.push({ specifier: `${kind}/${name}`, names: [via], line, reexport: false, dynamic: false, ref: "object" });
 };
 
-/** Kubernetes references to Secret/ConfigMap/PVC/ServiceAccount by name (env, envFrom, volumes, serviceAccountName). */
+/** The kind and name a key refers to, for Kubernetes reference keys (null: not a reference key, keep walking). */
+function refOf(k: string, x: unknown): [string, unknown] | null {
+  const o = asObj(x);
+  switch (k) {
+    case "secretKeyRef": case "secretRef": return ["Secret", o?.name];
+    case "configMapKeyRef": case "configMapRef": case "configMap": return ["ConfigMap", o?.name];
+    case "secret": return ["Secret", o?.secretName];
+    case "persistentVolumeClaim": return ["PersistentVolumeClaim", o?.claimName];
+    case "serviceAccountName": return ["ServiceAccount", x];
+    case "backend": return ["Service", asObj(o?.service)?.name ?? o?.serviceName]; // Ingress
+    case "scaleTargetRef": return [String(o?.kind ?? ""), o?.name]; // HorizontalPodAutoscaler
+    default: return null;
+  }
+}
+
+/** Kubernetes references to Secret/ConfigMap/PVC/ServiceAccount/Service/scale targets by name. */
 function collectObjectRefs(v: unknown, line: number, imports: Imports, depth = 0): void {
   if (depth > 40 || !v || typeof v !== "object") return;
   if (Array.isArray(v)) { v.forEach((x) => collectObjectRefs(x, line, imports, depth + 1)); return; }
-  const o = v as Record<string, unknown>;
-  for (const [k, x] of Object.entries(o)) {
-    const name = asObj(x)?.name;
-    if (k === "secretKeyRef" || k === "secretRef") objRef("Secret", name, line, k, imports);
-    else if (k === "configMapKeyRef" || k === "configMapRef") objRef("ConfigMap", name, line, k, imports);
-    else if (k === "secret") objRef("Secret", asObj(x)?.secretName, line, k, imports);
-    else if (k === "configMap") objRef("ConfigMap", name, line, k, imports);
-    else if (k === "persistentVolumeClaim") objRef("PersistentVolumeClaim", asObj(x)?.claimName, line, k, imports);
-    else if (k === "serviceAccountName") objRef("ServiceAccount", x, line, k, imports);
+  for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+    const r = refOf(k, x);
+    if (r && r[0]) objRef(r[0], r[1], line, k, imports);
     else collectObjectRefs(x, line, imports, depth + 1);
   }
 }
+
+const stringMap = (v: unknown): Record<string, string> | undefined => {
+  const o = asObj(v);
+  const e = o && Object.entries(o).filter(([, x]) => typeof x === "string") as Array<[string, string]>;
+  return e && e.length ? Object.fromEntries(e) : undefined;
+};
+
+/** Service selector and the pod template labels of workloads (Deployment, StatefulSet, DaemonSet, Job, CronJob). */
+function collectSelectors(j: Record<string, unknown>, extra: Pick<FileFacts, "k8sSelectors" | "k8sPodLabels">): void {
+  const spec = asObj(j.spec);
+  if (j.kind === "Service") {
+    const sel = stringMap(spec?.selector);
+    if (sel) (extra.k8sSelectors ??= []).push(sel);
+    return;
+  }
+  const tpl = asObj(j.kind === "CronJob" ? asObj(asObj(spec?.jobTemplate)?.spec)?.template : spec?.template);
+  const labels = stringMap(asObj(tpl?.metadata)?.labels);
+  if (labels) (extra.k8sPodLabels ??= []).push(labels);
+}
+
+/** docker compose `depends_on`: a list of names or a map keyed by name. */
+const dependsOn = (cfg: Record<string, unknown>): string[] => {
+  const d = cfg.depends_on;
+  return Array.isArray(d) ? d.filter((x): x is string => typeof x === "string") : Object.keys(asObj(d) ?? {});
+};
 
 /** kustomization.yaml: local resources, bases, components and patch files become path references. Remote URLs are skipped. */
 function parseKustomization(relPath: string, j: Record<string, unknown>, line: number, imports: Imports): void {
@@ -178,81 +212,98 @@ function parseKustomization(relPath: string, j: Record<string, unknown>, line: n
   if (Array.isArray(j.patches)) j.patches.forEach((p) => add(asObj(p)?.path));
 }
 
-function parseYaml(relPath: string, text: string, symbols: Symbols, imports: Imports): boolean {
+interface YamlCtx { lc: LineCounter; relPath: string; symbols: Symbols; imports: Imports; extra: Pick<FileFacts, "k8sSelectors" | "k8sPodLabels"> }
+const yamlLine = (c: YamlCtx, n: YNode | null | undefined) => (n && n.range ? c.lc.linePos(n.range[0]).line : 1);
+const yamlEnd = (c: YamlCtx, n: unknown, fallback: number) => ((n as YNode | null)?.range ? c.lc.linePos((n as YNode).range![1]).line : fallback);
+const addImport = (c: YamlCtx, specifier: string, names: string[], line: number, ref: NonNullable<Imports[number]["ref"]>) =>
+  c.imports.push({ specifier, names, line, reexport: false, dynamic: false, ref });
+
+/** Every `uses:` value below a node, with its line. */
+function collectUses(c: YamlCtx, n: unknown, out: Array<{ spec: string; line: number }>): void {
+  if (isSeq(n)) { n.items.forEach((x) => collectUses(c, x, out)); return; }
+  if (!isMap(n)) return;
+  for (const p of n.items) {
+    if (isScalar(p.key) && p.key.value === "uses" && isScalar(p.value) && typeof p.value.value === "string") out.push({ spec: p.value.value, line: yamlLine(c, p.value as YNode) });
+    else collectUses(c, p.value, out);
+  }
+}
+
+/** GitHub workflow: jobs as symbols, `uses:` as local path or action references. */
+function parseWorkflow(c: YamlCtx, jobs: YNode): void {
+  if (!isMap(jobs)) return;
+  for (const j of jobs.items) {
+    if (!isScalar(j.key)) continue;
+    const start = yamlLine(c, j.key as YNode);
+    c.symbols.push({ name: `job:${String(j.key.value)}`, detail: "workflow job", lines: [start, yamlEnd(c, j.value, start)] });
+  }
+  const uses: Array<{ spec: string; line: number }> = [];
+  collectUses(c, jobs, uses);
+  for (const u of uses) {
+    if (u.spec.startsWith("./")) addImport(c, u.spec.replace(/^\.\//, ""), ["uses"], u.line, "path");
+    else if (!u.spec.startsWith("docker://")) addImport(c, u.spec.replace(/@.*$/, ""), ["uses"], u.line, "action");
+  }
+}
+
+/** One docker compose service: symbol, `depends_on`, image (unless built here) and build context. */
+function parseComposeService(c: YamlCtx, name: string, line: number, cfg: Record<string, unknown>): void {
+  for (const dep of dependsOn(cfg)) addImport(c, `service:${dep}`, [`service:${name}`], line, "service");
+  const b = cfg.build;
+  // with `build` the image is only the tag of the result, not a dependency
+  const img = typeof cfg.image === "string" && b === undefined ? imageName(cfg.image) : undefined;
+  if (img) addImport(c, img, ["image"], line, "image");
+  const ctx = typeof b === "string" ? b : asObj(b)?.context;
+  if (typeof ctx !== "string") return;
+  const df = asObj(b)?.dockerfile;
+  const dir = path.posix.normalize(path.posix.join(path.posix.dirname(c.relPath), ctx));
+  addImport(c, path.posix.join(dir, typeof df === "string" ? df : "Dockerfile"), ["build"], line, "path");
+}
+
+function parseCompose(c: YamlCtx, services: YNode, doc: Document): void {
+  if (!isMap(services)) return;
+  for (const s of services.items) {
+    if (!isScalar(s.key)) continue;
+    const name = String(s.key.value), line = yamlLine(c, s.key as YNode);
+    c.symbols.push({ name: `service:${name}`, detail: "compose service", lines: [line, yamlEnd(c, s.value, line)] });
+    const cfg = asObj(plain(s.value, doc));
+    if (cfg) parseComposeService(c, name, line, cfg);
+  }
+}
+
+/** A Kubernetes object: symbol, images, references by name, selectors. */
+function parseKubernetes(c: YamlCtx, j: Record<string, unknown>, root: YNode): void {
+  const name = asObj(j.metadata)?.name;
+  const line = yamlLine(c, root);
+  c.symbols.push({ name: `${String(j.kind)}/${typeof name === "string" ? name : "?"}`, detail: `k8s ${String(j.kind)}`, lines: [line, yamlEnd(c, root, line)] });
+  const images: string[] = [];
+  collectImages(j, images);
+  for (const im of images) { const n = imageName(im); if (n) addImport(c, n, ["image"], line, "image"); }
+  const refs: Imports = [];
+  collectObjectRefs(j, line, refs);
+  collectSelectors(j, c.extra);
+  for (const r of refs) if (!c.imports.some((i) => i.ref === "object" && i.specifier === r.specifier)) c.imports.push(r); // once per file
+}
+
+function parseYaml(relPath: string, text: string, symbols: Symbols, imports: Imports, extra: YamlCtx["extra"]): boolean {
   const lc = new LineCounter();
-  const docs = parseAllDocuments(text, { lineCounter: lc });
+  const c: YamlCtx = { lc, relPath, symbols, imports, extra };
   const isWorkflow = /(^|\/)\.github\/workflows\/[^/]+\.ya?ml$/.test(relPath);
-  const lineOf = (n: YNode | null | undefined) => (n && n.range ? lc.linePos(n.range[0]).line : 1);
+  const isKustomization = /(^|\/)kustomization\.ya?ml$/.test(relPath);
   let error = false;
 
-  for (const doc of docs) {
+  for (const doc of parseAllDocuments(text, { lineCounter: lc })) {
     if (doc.errors.length) error = true;
     const root = doc.contents;
     if (!isMap(root)) continue;
-    const top = (key: string) => root.items.find((p) => isScalar(p.key) && p.key.value === key);
-
+    const top = (key: string) => root.items.find((p) => isScalar(p.key) && p.key.value === key)?.value as YNode | undefined;
     const jobs = isWorkflow ? top("jobs") : undefined;
-    if (jobs && isMap(jobs.value)) {
-      for (const j of jobs.value.items) {
-        if (!isScalar(j.key)) continue;
-        const start = lineOf(j.key as YNode), end = j.value && (j.value as YNode).range ? lc.linePos((j.value as YNode).range![1]).line : start;
-        symbols.push({ name: `job:${String(j.key.value)}`, detail: "workflow job", lines: [start, end] });
-      }
-      const uses: Array<{ spec: string; line: number }> = [];
-      const walk = (n: unknown) => {
-        if (isMap(n)) for (const p of n.items) {
-          if (isScalar(p.key) && p.key.value === "uses" && isScalar(p.value) && typeof p.value.value === "string") uses.push({ spec: p.value.value, line: lineOf(p.value as YNode) });
-          else walk(p.value);
-        } else if (isSeq(n)) n.items.forEach(walk);
-      };
-      walk(jobs.value);
-      for (const u of uses) {
-        if (u.spec.startsWith("./")) imports.push({ specifier: u.spec.replace(/^\.\//, ""), names: ["uses"], line: u.line, reexport: false, dynamic: false, ref: "path" });
-        else if (!u.spec.startsWith("docker://")) imports.push({ specifier: u.spec.replace(/@.*$/, ""), names: ["uses"], line: u.line, reexport: false, dynamic: false, ref: "action" });
-      }
-      continue;
-    }
-
     const services = top("services");
-    if (services && isMap(services.value)) { // docker compose
-      for (const s of services.value.items) {
-        if (!isScalar(s.key)) continue;
-        const name = String(s.key.value), line = lineOf(s.key as YNode);
-        const end = s.value && (s.value as YNode).range ? lc.linePos((s.value as YNode).range![1]).line : line;
-        symbols.push({ name: `service:${name}`, detail: "compose service", lines: [line, end] });
-        const cfg = asObj(plain(s.value, doc));
-        if (!cfg) continue;
-        const b = cfg.build;
-        // with `build` the image is only the tag of the result, not a dependency
-        const img = typeof cfg.image === "string" && b === undefined ? imageName(cfg.image) : undefined;
-        if (img) imports.push({ specifier: img, names: ["image"], line, reexport: false, dynamic: false, ref: "image" });
-        const ctx = typeof b === "string" ? b : typeof asObj(b)?.context === "string" ? (asObj(b)!.context as string) : undefined;
-        if (ctx !== undefined) {
-          const df = typeof asObj(b)?.dockerfile === "string" ? (asObj(b)!.dockerfile as string) : "Dockerfile";
-          const dir = path.posix.normalize(path.posix.join(path.posix.dirname(relPath), ctx));
-          imports.push({ specifier: path.posix.join(dir, df), names: ["build"], line, reexport: false, dynamic: false, ref: "path" });
-        }
-      }
-      continue;
-    }
-
+    if (jobs && isMap(jobs)) { parseWorkflow(c, jobs); continue; }
+    if (services && isMap(services)) { parseCompose(c, services, doc); continue; } // docker compose
     const j = asObj(plain(root, doc));
-    if (j && /(^|\/)kustomization\.ya?ml$/.test(relPath)) {
-      symbols.push({ name: "Kustomization", detail: "kustomize", lines: [lineOf(root as YNode), lc.linePos(root.range![1]).line] });
-      parseKustomization(relPath, j, lineOf(root as YNode), imports);
-      continue;
-    }
-    if (j && typeof j.apiVersion === "string" && typeof j.kind === "string") { // kubernetes
-      const name = asObj(j.metadata)?.name;
-      const line = lineOf(root as YNode);
-      symbols.push({ name: `${j.kind}/${typeof name === "string" ? name : "?"}`, detail: `k8s ${j.kind}`, lines: [line, lc.linePos(root.range![1]).line] });
-      const images: string[] = [];
-      collectImages(j, images);
-      for (const im of images) { const n = imageName(im); if (n) imports.push({ specifier: n, names: ["image"], line, reexport: false, dynamic: false, ref: "image" }); }
-      const refs: Imports = [];
-      collectObjectRefs(j, line, refs);
-      for (const r of refs) if (!imports.some((i) => i.ref === "object" && i.specifier === r.specifier)) imports.push(r); // once per file
-    }
+    if (j && isKustomization) {
+      symbols.push({ name: "Kustomization", detail: "kustomize", lines: [yamlLine(c, root as YNode), yamlEnd(c, root, 1)] });
+      parseKustomization(relPath, j, yamlLine(c, root as YNode), imports);
+    } else if (j && typeof j.apiVersion === "string" && typeof j.kind === "string") parseKubernetes(c, j, root as YNode);
   }
   return error;
 }
@@ -269,7 +320,7 @@ export function parseConfig(relPath: string, text: string): FileFacts {
     else if (base.endsWith(".md")) parseMarkdown(relPath, text, facts.symbols, facts.imports);
     else if (base.endsWith(".properties") || /^\.env/.test(base)) parseKeys(text, facts.symbols);
     else if (base.endsWith(".sql")) parseSql(text, facts.symbols);
-    else facts.parseError = parseYaml(relPath, text, facts.symbols, facts.imports);
+    else facts.parseError = parseYaml(relPath, text, facts.symbols, facts.imports, facts);
   } catch {
     facts.parseError = true; // e.g. pathological nesting: keep whatever was collected, flag the file
   }
