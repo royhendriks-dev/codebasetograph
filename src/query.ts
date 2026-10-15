@@ -49,7 +49,7 @@ export function isTestPath(p: string): boolean {
 
 /**
  * Plain, explainable scoring (a baseline to measure against, not a quality claim):
- * exact name match 3, name contains word 2, path contains word 1; exported symbols +1; tests x0.3; Markdown headings x0.3; config keys x0.5 (many per file, would crowd out code).
+ * exact name match 3, name contains word 2, path contains word 1; exported symbols +1; tests x0.3; Markdown headings, npm scripts and maven artifacts x0.3; config keys x0.5 (many per file, would crowd out code).
  * Non-exported symbols need a name match; a path-only match is kept for files, not for symbols.
  */
 export function scoreNode(n: GraphNode, words: string[]): number {
@@ -62,7 +62,7 @@ export function scoreNode(n: GraphNode, words: string[]): number {
   }
   if (s === 0) return 0;
   if (n.kind === "symbol" && n.exported) s += 1;
-  if ((n.path && isTestPath(n.path)) || n.detail?.startsWith("md h") || (n.kind === "file" && n.path?.endsWith(".md"))) s *= 0.3;
+  if ((n.path && isTestPath(n.path)) || n.detail?.startsWith("md h") || n.detail === "npm script" || n.detail === "maven artifact" || (n.kind === "file" && n.path?.endsWith(".md"))) s *= 0.3;
   if (n.detail === "config key") s *= 0.5;
   return s;
 }

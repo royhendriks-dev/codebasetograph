@@ -63,7 +63,7 @@ Per-file facts are cached by SHA-256 of content. Changed files are re-parsed, de
 - Client to backend: TS files keep URL-like string literals (`'/api/auth'`, `` `/api/${game}/highscores` `` as `/api/{}/highscores`; test files skipped), Java files keep full JAX-RS routes (class `@Path` + method `@Path`). A TS file links to the Java file whose route agrees segment by segment up to the shorter of the two (at least two segments, `{x}` matches one segment, best exact fit wins). `references`, `inferred`: a string that looks like a route is not proof it is called. Only JAX-RS; Spring/Express/Nest routes are not read.
 - Tests: `foo.spec.ts`/`foo.test.ts` link to `foo.ts` next to it, `FooTest.java`/`FooTests.java`/`FooIT.java` to the unique `Foo.java` (`references`, `inferred`, specifier `test of`; skipped when the test already imports its subject or the name is ambiguous). A convention, not proof.
 - Kustomize: `resources`/`bases`/`components`/`patches` are `references` to local files (a directory points at its `kustomization.yaml`; remote URLs are skipped). Kubernetes `secretKeyRef`/`configMapRef`/`volumes`/`serviceAccountName` link to the file declaring that `Kind/name`: `inferred` when exactly one other file declares it (namespace is not checked), `unresolved` when none does (e.g. created outside the repo), no edge when ambiguous. Interpolated images: `${VAR:-default}` uses the default, anything else is skipped; a compose service with `build` has no image edge.
-- Not covered: Helm templates and Kustomize generators/transformers (templated YAML may be flagged `parseError`), `depends_on`/service-to-service links, linking an image to the compose service or k8s manifest that builds it, `package.json`/`pom.xml` dependency lists, SQL beyond CREATE statements.
+- Not covered: Helm templates and Kustomize generators/transformers (templated YAML may be flagged `parseError`), `depends_on`/service-to-service links, linking an image to the compose service or k8s manifest that builds it, Gradle files, SQL beyond CREATE statements.
 - Security: YAML is parsed only; the parser is pinned to a version without the nested-collection stack-overflow advisory found by `npm audit` in 2.8.x, and a parse crash is caught and recorded as `parseError`.
 
 ## tsconfig aliases and Angular links
@@ -97,6 +97,12 @@ Per-file facts are cached by SHA-256 of content. Changed files are re-parsed, de
 
 - `.md` files: headings (h1-h6, outside code fences, max 300) become symbols (`md hN`); relative links to indexed files become `references` edges, evidence `resolved` (URLs, images, missing targets and links leaving the repo give no edge). Parser `config-6`.
 - Ranking: Markdown files and headings count x0.3 in `context`, like tests. Measured on the portfolio copy (30 code-edit tasks): graph recall 72% to 70%, tokens 5.5k to 6.6k; the grep baseline also drops (51% to 32%) because docs add matches. The tasks all target code, so this cost is expected; a documentation question is not covered by this benchmark.
+
+## package.json and pom.xml
+
+- `package.json`: dependency names (all four sections) become `imports` edges to the same `pkg:<name>` node TS imports use, evidence `extracted` (read straight from the file, not resolved). Scripts become symbols (`script:build`); versions and script commands are never stored. `workspaces` globs are not expanded.
+- `pom.xml` (regex, not an XML parser, comments stripped): own artifactId as symbol, `<module>` as path reference to the child `pom.xml` (resolved or unresolved), `<dependency>` as `groupId:artifactId`. A dependency whose artifactId is declared by exactly one other pom in the repo links to that file (`inferred`: name match); others become `pkg:maven:<g>:<a>` (`extracted`). Dependencies with `${...}` properties are skipped; parent poms are not followed. Parser `config-7`.
+- Ranking: npm scripts and maven artifacts count x0.3 (names like `test`/`build` match too many tasks). 30-task portfolio benchmark: recall 70% (same as after Markdown), tokens ~6.5k.
 
 ## Agent access (`mcp`, `hook`)
 
