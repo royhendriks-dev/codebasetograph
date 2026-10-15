@@ -30,7 +30,7 @@ Every pull request in this repository follows the same checklist:
 
 1. **Jira ticket** on the *PRW board* (project Portfolio Website, `roy-portfolio.atlassian.net`). The summary starts with `CDTG - ` to mark it as codebasetograph work. Write it as a story: user story, what was done, acceptance criteria, instructions for AI, links.
 2. **Branch and PR** from the ticket. The PR description links the Jira ticket and the Confluence page.
-3. **Confluence page** per PR in the *Portfolio Website* space, titled `PRW-<n> CDTG - <summary>`. It records the Jira key, the PR number and status, what changed and why.
+3. **Confluence page** per PR in the *Portfolio Website* space, folder `codebasetograph` > `Tickets`, titled `PRW-<n> CDTG - <summary>`. It records the Jira key, the PR number and status, what changed and why.
 4. **Keep them in sync.** Create the ticket and page in the same session as the PR; update both when the PR merges (status Done, merge date).
 
 Tickets, pages and README text are written in English unless the owner asks otherwise.
