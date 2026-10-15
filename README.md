@@ -22,7 +22,7 @@ Principles:
 
 ## Status
 
-Early stage. A minimal TypeScript core exists (discovery, TS/JS import and declaration extraction, JSON graph, queries, CLI). See [docs/design.md](docs/design.md) for scope and known limits. Graphify research (Phase 1) is only partially done.
+Early stage. A minimal TypeScript core exists (discovery, TS/JS and Java import and declaration extraction, JSON graph, queries, CLI). See [docs/design.md](docs/design.md) for scope and known limits. Graphify research (Phase 1) is only partially done.
 
 ## Quick start
 

@@ -31,6 +31,7 @@ discover -> parse (per file) -> link (all files) -> graph.json -> query -> CLI /
 | `build.ts` | Per-file cache by content hash, linking, atomic write of `.cbtg/graph.json` |
 | `query.ts` | find, deps, dependents, bounded related walk, budgeted task context |
 | `view.ts` | Self-contained HTML explorer generated from the graph: search, symbols per file, imports / imported-by with evidence badges. Repo-derived text is set via `textContent` (untrusted input). Not a graph drawing on purpose |
+| `java.ts` | Java via tree-sitter (WASM grammar, parse only): package, imports (incl. static and wildcard), top-level types with annotations (e.g. `@Path`, `@ApplicationScoped`), methods, `extends`/`implements` |
 | `cli.ts` | `cbtg` commands |
 
 Language choice: TypeScript/Node, because the TS compiler API is the most accurate parser for TS/Angular and matches the primary stack. Python+tree-sitter was not evaluated yet; revisit when more languages are needed.
@@ -45,9 +46,17 @@ Language choice: TypeScript/Node, because the TS compiler API is the most accura
 
 Per-file facts are cached by SHA-256 of content. Changed files are re-parsed, deleted files dropped, and cross-file links are **always recomputed from all facts**. This costs little and removes the class of stale-edge bugs. A corrupt or unknown-version graph file is ignored and rebuilt. Writes go through a temp file and rename.
 
+## Java (added after the first skeleton)
+
+- Parser: `web-tree-sitter` 0.25.10 (MIT) with the Java grammar from `tree-sitter-wasms` 0.1.13 (Unlicense), both pinned: newer web-tree-sitter versions failed to load these grammar files in a local check. Pure WASM, no native build.
+- Linking: an import resolves (`resolved`) when its fully-qualified type is declared in an indexed file; a static import resolves to its type. Wildcard imports are `inferred` (which classes are used is unknown). Anything else (JDK, jakarta, org.*) is an `inferred` package node. `extends`/`implements` edges exist only when the supertype resolves via an explicit import or the same package; unknown supertypes produce no edge rather than a guess.
+- Not covered: same-package use without any import or extends (no edge), usages inside method bodies (no call graph), Maven/Gradle modules, annotation processing and generated sources, Kotlin/Scala. Overloaded methods share one node id.
+- Cached facts carry a parser version; facts from an older parser version are re-parsed.
+- Checked on a copy of Roy's portfolio repo (60 Java + 73 TS files): 133 files indexed in under a second, no parse errors, no unresolved own-package imports. That is a spot check, not an accuracy measurement.
+
 ## Known limits
 
-- File-level imports and top-level declarations only: no call graph, no member-level symbols, duplicate names in one file collapse to one node.
+- TypeScript: file-level imports and top-level declarations only: no call graph, no member-level symbols, duplicate names in one file collapse to one node. Java: see above.
 - No tsconfig `paths`, package `exports`, monorepo workspaces, or Angular template/DI edges. Aliased imports show as `inferred` packages.
 - `.gitignore` support is partial (no negation, no nested files).
 - Context ranking is plain name matching. It is a baseline to measure against, not a claim of quality.

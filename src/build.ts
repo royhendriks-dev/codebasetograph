@@ -1,7 +1,8 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { discover } from "./discover.js";
-import { parseFile } from "./parse.js";
+import { parseFile, TS_PARSER_VERSION } from "./parse.js";
+import { parseJava, JAVA_PARSER_VERSION } from "./java.js";
 import type { FileFacts, Graph, GraphEdge, GraphNode } from "./model.js";
 
 export const GRAPH_DIR = ".cbtg";
@@ -23,6 +24,20 @@ export function link(files: Record<string, FileFacts>): { nodes: GraphNode[]; ed
   const nodes = new Map<string, GraphNode>();
   const edges: GraphEdge[] = [];
   const known = new Set(Object.keys(files));
+  // Java: fully-qualified type name -> file, and package -> files
+  const byFqn = new Map<string, string>();
+  const byPackage = new Map<string, string[]>();
+  for (const f of Object.values(files)) {
+    if (f.lang !== "java") continue;
+    const pkg = f.javaPackage ?? "";
+    byPackage.set(pkg, [...(byPackage.get(pkg) ?? []), f.path]);
+    for (const sym of f.symbols) if (!sym.name.includes(".")) byFqn.set(pkg ? `${pkg}.${sym.name}` : sym.name, f.path);
+  }
+  const pkgNode = (name: string) => {
+    const id = `pkg:${name}`;
+    if (!nodes.has(id)) nodes.set(id, { id, kind: "package", name });
+    return id;
+  };
   for (const f of Object.values(files).sort((a, b) => a.path.localeCompare(b.path))) {
     const fileId = `file:${f.path}`;
     nodes.set(fileId, { id: fileId, kind: "file", name: path.posix.basename(f.path), path: f.path });
@@ -30,6 +45,30 @@ export function link(files: Record<string, FileFacts>): { nodes: GraphNode[]; ed
       const id = `sym:${f.path}#${s.name}`;
       if (!nodes.has(id)) nodes.set(id, { id, kind: "symbol", path: f.path, ...s });
       edges.push({ from: fileId, to: id, kind: "declares", evidence: "extracted", line: s.lines?.[0] });
+    }
+    if (f.lang === "java") {
+      for (const imp of f.imports) {
+        const base = { from: fileId, specifier: imp.specifier, line: imp.line };
+        if (imp.names[0] === "extends" && !imp.specifier.includes(".")) {
+          // supertype by simple name: explicit import first, then same package. Unknown (JDK/external) => no edge, not a guess.
+          const viaImport = f.imports.find((i) => !i.wildcard && i.names[0] !== "extends" && i.specifier.endsWith("." + imp.specifier));
+          const target = (viaImport && byFqn.get(viaImport.specifier)) ?? byFqn.get(`${f.javaPackage ? f.javaPackage + "." : ""}${imp.specifier}`);
+          if (target && target !== f.path) edges.push({ ...base, to: `file:${target}`, kind: "extends", evidence: "resolved" });
+          continue;
+        }
+        if (imp.wildcard) {
+          const members = byPackage.get(imp.specifier);
+          if (members) for (const m of members) edges.push({ ...base, to: `file:${m}`, kind: "imports", evidence: "inferred" });
+          else edges.push({ ...base, to: pkgNode(imp.specifier), kind: "imports", evidence: "inferred" });
+          continue;
+        }
+        // exact type, or a static import of a member (strip the member to find the type)
+        const typeFqn = byFqn.has(imp.specifier) ? imp.specifier : imp.specifier.split(".").slice(0, -1).join(".");
+        const target = byFqn.get(typeFqn);
+        if (target) edges.push({ ...base, to: `file:${target}`, kind: "imports", evidence: "resolved" });
+        else edges.push({ ...base, to: pkgNode(imp.specifier.split(".").slice(0, -1).join(".") || imp.specifier), kind: "imports", evidence: "inferred" });
+      }
+      continue;
     }
     for (const imp of f.imports) {
       const kind = imp.reexport ? "reexports" : "imports";
@@ -66,8 +105,10 @@ export async function indexRepo(root: string): Promise<{ graph: Graph; stats: In
     const { createHash } = await import("node:crypto");
     const hash = createHash("sha256").update(text).digest("hex");
     const prev = previous?.files[rel];
-    if (prev && prev.hash === hash) { files[rel] = prev; reused++; }
-    else { files[rel] = parseFile(rel, text); parsed++; }
+    const isJava = rel.endsWith(".java");
+    const parserVersion = isJava ? JAVA_PARSER_VERSION : TS_PARSER_VERSION;
+    if (prev && prev.hash === hash && prev.parser === parserVersion) { files[rel] = prev; reused++; }
+    else { files[rel] = isJava ? await parseJava(rel, text) : parseFile(rel, text); parsed++; }
   }
   const removed = previous ? Object.keys(previous.files).filter((p) => !(p in files)).length : 0;
   const graph: Graph = { version: 1, root: path.basename(root), files, ...link(files), skipped };

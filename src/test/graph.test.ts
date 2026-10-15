@@ -105,6 +105,42 @@ test("view: HTML is self-contained and escapes hostile names", async () => {
   assert.doesNotMatch(html, /innerHTML/);
 });
 
+test("java: package, imports, annotations, methods, same-package and cross-package links", async () => {
+  const root = await fixture({
+    "src/main/java/app/user/UserService.java": `package app.user;\nimport java.util.List;\nimport jakarta.inject.Inject;\nimport app.api.Greeter;\n@ApplicationScoped\npublic class UserService extends BaseService implements Greeter {\n  public String hello() { return ""; }\n}\n`,
+    "src/main/java/app/user/BaseService.java": `package app.user;\npublic abstract class BaseService {}\n`,
+    "src/main/java/app/api/Greeter.java": `package app.api;\npublic interface Greeter {}\n`,
+    "src/main/java/app/web/UserResource.java": `package app.web;\nimport app.user.UserService;\nimport app.api.*;\nimport static app.user.UserService.hello;\nimport org.other.Missing;\n@Path("/u")\npublic class UserResource { @GET public void get() {} }\n`,
+    "target/gen/Skip.java": `package x; class Skip {}`,
+    "src/main/java/app/Broken.java": `package app; public class { void ( `,
+  });
+  const { graph } = await indexRepo(root);
+  assert.ok(!graph.files["target/gen/Skip.java"], "target/ is ignored");
+  const svc = graph.nodes.find((n) => n.id === "sym:src/main/java/app/user/UserService.java#UserService")!;
+  assert.equal(svc.detail, "class @ApplicationScoped");
+  assert.ok(graph.nodes.some((n) => n.id.endsWith("UserService.java#UserService.hello")));
+  assert.equal(graph.nodes.find((n) => n.id.endsWith("UserResource.java#UserResource"))!.detail, "class @Path");
+  const edge = (from: string, kind: string, spec: string) => graph.edges.find((e) => e.from.endsWith(from) && e.kind === kind && e.specifier === spec);
+  assert.equal(edge("UserResource.java", "imports", "app.user.UserService")?.evidence, "resolved");
+  assert.equal(edge("UserResource.java", "imports", "app.user.UserService.hello")?.evidence, "resolved", "static import resolves to the type");
+  assert.equal(edge("UserResource.java", "imports", "org.other.Missing")?.evidence, "inferred");
+  assert.equal(edge("UserResource.java", "imports", "app.api")?.evidence, "inferred", "wildcard is inferred");
+  assert.equal(edge("UserService.java", "extends", "BaseService")?.to, "file:src/main/java/app/user/BaseService.java", "same-package supertype");
+  assert.equal(edge("UserService.java", "extends", "Greeter")?.evidence, "resolved");
+  assert.equal(graph.files["src/main/java/app/Broken.java"].parseError, true);
+  assert.deepEqual(dependents(graph, "src/main/java/app/user/UserService.java").map((e) => e.from.split("/").pop()).sort(), ["UserResource.java", "UserResource.java"]);
+});
+
+test("cache: facts from an older parser version are re-parsed", async () => {
+  const root = await fixture({ "a.ts": `export const a = 1;` });
+  await indexRepo(root);
+  const gp = path.join(root, ".cbtg/graph.json");
+  const g = JSON.parse(await fs.readFile(gp, "utf8"));
+  g.files["a.ts"].parser = "ts-0";
+  await fs.writeFile(gp, JSON.stringify(g));
+  assert.equal((await indexRepo(root)).stats.parsed, 1);
+});
+
 test("context ranking: source ranks above specs; stopwords ignored; exported symbol beats private const", async () => {
   const root = await fixture({
     "src/auth.service.ts": `export class AuthService {}\nconst AUTH_URL = '/a';\n`,
