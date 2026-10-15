@@ -175,13 +175,38 @@ test("config: workflow, compose, k8s, Dockerfile and SQL are indexed with honest
   assert.equal(ev("compose.yaml", "backend/Dockerfile"), "resolved");
   assert.equal(ev("compose.yaml", "web/Dockerfile"), "unresolved");
   assert.equal(ev("compose.yaml", "postgres"), "inferred");
-  assert.equal(ev("compose.yaml", "${API_IMAGE:-local-api:dev}"), "inferred", "interpolated image names are kept verbatim");
+  assert.equal(ev("compose.yaml", "local-api"), "inferred", "${VAR:-default} uses the default image");
   assert.equal(ev(".github/workflows/ci.yml", "actions/checkout"), "inferred");
   assert.equal(ev(".github/workflows/ci.yml", ".github/workflows/missing.yml"), "unresolved");
   assert.equal(ev("k8s/backend.yaml", "ghcr.io/x/backend"), "inferred");
   assert.equal(ev("backend/Dockerfile", "maven"), "inferred");
   assert.equal(graph.edges.some((e) => e.from === "file:backend/Dockerfile" && e.specifier === "build"), false, "FROM <stage> is not an image");
   assert.equal(graph.files["bad.yml"].parseError, true);
+});
+
+test("k8s: kustomization resources and Secret/ConfigMap/PVC/ServiceAccount references link across files", async () => {
+  const root = await fixture({
+    "k8s/kustomization.yaml": `resources:\n  - backend.yaml\n  - secrets.yaml\n  - ./overlay\n  - missing.yaml\n  - https://example.com/x.yaml\npatches:\n  - path: patch.yaml\n`,
+    "k8s/overlay/kustomization.yaml": `resources: []\n`,
+    "k8s/patch.yaml": `apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: backend\n`,
+    "k8s/secrets.yaml": `apiVersion: v1\nkind: Secret\nmetadata:\n  name: db-secret\n`,
+    "k8s/backend.yaml": `apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: backend\nspec:\n  template:\n    spec:\n      serviceAccountName: runner\n      containers:\n        - name: app\n          image: \${IMG}\n          env:\n            - name: P\n              valueFrom:\n                secretKeyRef:\n                  name: db-secret\n                  key: p\n          envFrom:\n            - configMapRef:\n                name: app-config\n      volumes:\n        - name: d\n          persistentVolumeClaim:\n            claimName: data\n`,
+    "compose.yaml": `services:\n  web:\n    build: ./web\n    image: \${WEB_IMAGE}\n`,
+  });
+  const { graph } = await indexRepo(root);
+  const ev = (from: string, spec: string) => graph.edges.find((e) => e.from === `file:${from}` && e.specifier === spec)?.evidence;
+  assert.equal(ev("k8s/kustomization.yaml", "k8s/backend.yaml"), "resolved");
+  assert.equal(ev("k8s/kustomization.yaml", "k8s/overlay"), "resolved", "directory resolves to its kustomization file");
+  assert.equal(graph.edges.find((e) => e.specifier === "k8s/overlay")?.to, "file:k8s/overlay/kustomization.yaml");
+  assert.equal(ev("k8s/kustomization.yaml", "k8s/patch.yaml"), "resolved");
+  assert.equal(ev("k8s/kustomization.yaml", "k8s/missing.yaml"), "unresolved");
+  assert.equal(graph.edges.some((e) => e.specifier?.includes("example.com")), false, "remote resources are skipped");
+  assert.equal(ev("k8s/backend.yaml", "Secret/db-secret"), "inferred");
+  assert.equal(ev("k8s/backend.yaml", "ConfigMap/app-config"), "unresolved");
+  assert.equal(ev("k8s/backend.yaml", "PersistentVolumeClaim/data"), "unresolved");
+  assert.equal(ev("k8s/backend.yaml", "ServiceAccount/runner"), "unresolved");
+  assert.equal(graph.edges.some((e) => e.from === "file:k8s/backend.yaml" && e.specifier === "${IMG}"), false, "unknown image is not a package");
+  assert.equal(graph.edges.some((e) => e.from === "file:compose.yaml" && e.specifier?.includes("WEB_IMAGE")), false, "build + image: the image is only a tag");
 });
 
 test("config: pathological nesting does not crash the indexer", async () => {

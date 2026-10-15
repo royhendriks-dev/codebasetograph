@@ -3,13 +3,23 @@ import * as path from "node:path";
 import { LineCounter, type Document, isMap, isScalar, isSeq, parseAllDocuments, type Node as YNode } from "yaml";
 import type { FileFacts } from "./model.js";
 
-export const CONFIG_PARSER_VERSION = "config-1";
+export const CONFIG_PARSER_VERSION = "config-2";
 
 type Symbols = FileFacts["symbols"];
 type Imports = FileFacts["imports"];
 
 /** Image name without tag/digest. Strings with `${VAR}` interpolation stay as written: the real image is unknown. */
-const strip = (image: string) => (image.includes("${") ? image : image.replace(/@sha256:.*$/, "").replace(/:[^/:]+$/, ""));
+const strip = (image: string) => image.replace(/@sha256:.*$/, "").replace(/:[^/:]+$/, "");
+
+/**
+ * Image name for the graph, or undefined when it cannot be known. `${VAR:-default}` uses the default;
+ * any other interpolation is skipped instead of becoming a made-up package node.
+ */
+function imageName(image: string): string | undefined {
+  const m = image.match(/^\$\{[A-Za-z_]\w*:?-([^}]+)\}$/);
+  const v = m ? m[1] : image;
+  return v.includes("${") || v.includes("$(") ? undefined : strip(v);
+}
 
 function plain(node: unknown, doc: Document): unknown {
   return node && typeof (node as { toJS?: unknown }).toJS === "function" ? (node as { toJS: (d: Document) => unknown }).toJS(doc) : node;
@@ -46,6 +56,38 @@ function collectImages(v: unknown, out: string[], depth = 0): void {
     if (k === "image" && typeof x === "string") out.push(x);
     else collectImages(x, out, depth + 1);
   }
+}
+
+const objRef = (kind: string, name: unknown, line: number, via: string, imports: Imports) => {
+  if (typeof name === "string" && name && !name.includes("$")) imports.push({ specifier: `${kind}/${name}`, names: [via], line, reexport: false, dynamic: false, ref: "object" });
+};
+
+/** Kubernetes references to Secret/ConfigMap/PVC/ServiceAccount by name (env, envFrom, volumes, serviceAccountName). */
+function collectObjectRefs(v: unknown, line: number, imports: Imports, depth = 0): void {
+  if (depth > 40 || !v || typeof v !== "object") return;
+  if (Array.isArray(v)) { v.forEach((x) => collectObjectRefs(x, line, imports, depth + 1)); return; }
+  const o = v as Record<string, unknown>;
+  for (const [k, x] of Object.entries(o)) {
+    const name = asObj(x)?.name;
+    if (k === "secretKeyRef" || k === "secretRef") objRef("Secret", name, line, k, imports);
+    else if (k === "configMapKeyRef" || k === "configMapRef") objRef("ConfigMap", name, line, k, imports);
+    else if (k === "secret") objRef("Secret", asObj(x)?.secretName, line, k, imports);
+    else if (k === "configMap") objRef("ConfigMap", name, line, k, imports);
+    else if (k === "persistentVolumeClaim") objRef("PersistentVolumeClaim", asObj(x)?.claimName, line, k, imports);
+    else if (k === "serviceAccountName") objRef("ServiceAccount", x, line, k, imports);
+    else collectObjectRefs(x, line, imports, depth + 1);
+  }
+}
+
+/** kustomization.yaml: local resources, bases, components and patch files become path references. Remote URLs are skipped. */
+function parseKustomization(relPath: string, j: Record<string, unknown>, line: number, imports: Imports): void {
+  const dir = path.posix.dirname(relPath);
+  const add = (v: unknown) => {
+    if (typeof v !== "string" || v.includes("://") || v.startsWith("git@") || v.includes("$")) return;
+    imports.push({ specifier: path.posix.normalize(path.posix.join(dir, v)), names: ["kustomize"], line, reexport: false, dynamic: false, ref: "path" });
+  };
+  for (const k of ["resources", "bases", "components", "patchesStrategicMerge"]) if (Array.isArray(j[k])) j[k].forEach(add);
+  if (Array.isArray(j.patches)) j.patches.forEach((p) => add(asObj(p)?.path));
 }
 
 function parseYaml(relPath: string, text: string, symbols: Symbols, imports: Imports): boolean {
@@ -92,8 +134,10 @@ function parseYaml(relPath: string, text: string, symbols: Symbols, imports: Imp
         symbols.push({ name: `service:${name}`, detail: "compose service", lines: [line, end] });
         const cfg = asObj(plain(s.value, doc));
         if (!cfg) continue;
-        if (typeof cfg.image === "string") imports.push({ specifier: strip(cfg.image), names: ["image"], line, reexport: false, dynamic: false, ref: "image" });
         const b = cfg.build;
+        // with `build` the image is only the tag of the result, not a dependency
+        const img = typeof cfg.image === "string" && b === undefined ? imageName(cfg.image) : undefined;
+        if (img) imports.push({ specifier: img, names: ["image"], line, reexport: false, dynamic: false, ref: "image" });
         const ctx = typeof b === "string" ? b : typeof asObj(b)?.context === "string" ? (asObj(b)!.context as string) : undefined;
         if (ctx !== undefined) {
           const df = typeof asObj(b)?.dockerfile === "string" ? (asObj(b)!.dockerfile as string) : "Dockerfile";
@@ -105,13 +149,21 @@ function parseYaml(relPath: string, text: string, symbols: Symbols, imports: Imp
     }
 
     const j = asObj(plain(root, doc));
+    if (j && /(^|\/)kustomization\.ya?ml$/.test(relPath)) {
+      symbols.push({ name: "Kustomization", detail: "kustomize", lines: [lineOf(root as YNode), lc.linePos(root.range![1]).line] });
+      parseKustomization(relPath, j, lineOf(root as YNode), imports);
+      continue;
+    }
     if (j && typeof j.apiVersion === "string" && typeof j.kind === "string") { // kubernetes
       const name = asObj(j.metadata)?.name;
       const line = lineOf(root as YNode);
       symbols.push({ name: `${j.kind}/${typeof name === "string" ? name : "?"}`, detail: `k8s ${j.kind}`, lines: [line, lc.linePos(root.range![1]).line] });
       const images: string[] = [];
       collectImages(j, images);
-      for (const im of images) imports.push({ specifier: strip(im), names: ["image"], line, reexport: false, dynamic: false, ref: "image" });
+      for (const im of images) { const n = imageName(im); if (n) imports.push({ specifier: n, names: ["image"], line, reexport: false, dynamic: false, ref: "image" }); }
+      const refs: Imports = [];
+      collectObjectRefs(j, line, refs);
+      for (const r of refs) if (!imports.some((i) => i.ref === "object" && i.specifier === r.specifier)) imports.push(r); // once per file
     }
   }
   return error;
