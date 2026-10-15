@@ -2,12 +2,12 @@ import ts from "typescript";
 import { isTestPath } from "./query.js";
 import { createHash } from "node:crypto";
 import type { FileFacts } from "./model.js";
-import { customElements, elementSelector } from "./angular.js";
+import { attributeSelector, customElements, elementSelector } from "./angular.js";
 
 const ANGULAR = new Set(["Component", "Directive", "Pipe", "Injectable", "NgModule"]);
 
 /** Parses source text with the TypeScript parser. Source is never executed. Malformed input yields partial facts. */
-export const TS_PARSER_VERSION = "ts-3";
+export const TS_PARSER_VERSION = "ts-4";
 
 export function parseFile(relPath: string, text: string): FileFacts {
   const hash = createHash("sha256").update(text).digest("hex");
@@ -43,8 +43,10 @@ export function parseFile(relPath: string, text: string): FileFacts {
             const key = p.name.text, v = p.initializer;
             if (key === "selector" && ts.isStringLiteralLike(v)) {
               role += `[${v.text}]`;
-              const sel = elementSelector(v.text);
+              const sel = elementSelector(v.text) ?? attributeSelector(v.text);
               if (sel) (facts.selectors ??= []).push(sel);
+            } else if (key === "name" && role === "pipe" && ts.isStringLiteralLike(v)) {
+              (facts.selectors ??= []).push(`|${v.text}`);
             } else if ((key === "templateUrl" || key === "styleUrl") && ts.isStringLiteralLike(v)) {
               addUrl(v.text, key, v);
             } else if (key === "styleUrls" && ts.isArrayLiteralExpression(v)) {

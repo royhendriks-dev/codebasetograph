@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { customElements } from "./angular.js";
 import type { FileFacts } from "./model.js";
 
-export const ASSET_PARSER_VERSION = "asset-1";
+export const ASSET_PARSER_VERSION = "asset-2";
 
 /** HTML templates and stylesheets: file nodes, plus custom elements used in HTML. No parsing of styles. */
 export function parseAsset(relPath: string, text: string): FileFacts {
