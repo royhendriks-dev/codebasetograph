@@ -3,7 +3,7 @@ export type Evidence = "extracted" | "resolved" | "inferred" | "unresolved";
 
 export type NodeKind = "file" | "symbol" | "package";
 /** `extends` covers both Java extends and implements. */
-export type EdgeKind = "imports" | "reexports" | "declares" | "extends";
+export type EdgeKind = "imports" | "reexports" | "declares" | "extends" | "references";
 
 export interface GraphNode {
   /** Stable id: `file:<relpath>`, `sym:<relpath>#<name>`, `pkg:<name>`. Independent of absolute paths. */
@@ -34,12 +34,12 @@ export interface FileFacts {
   hash: string;
   parseError: boolean;
   /** Language and parser version that produced these facts; a mismatch forces a re-parse of cached files. */
-  lang?: "ts" | "java";
+  lang?: "ts" | "java" | "config";
   parser?: string;
   /** Java only: declared package. */
   javaPackage?: string;
   symbols: Array<Omit<GraphNode, "id" | "kind" | "path"> & { name: string }>;
-  imports: Array<{ specifier: string; names: string[]; line: number; reexport: boolean; dynamic: boolean; wildcard?: boolean }>;
+  imports: Array<{ specifier: string; names: string[]; line: number; reexport: boolean; dynamic: boolean; wildcard?: boolean; ref?: "path" | "image" | "action" }>;
 }
 
 export interface Graph {

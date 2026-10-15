@@ -156,3 +156,37 @@ test("context ranking: source ranks above specs; stopwords ignored; exported sym
   const { isTestPath } = await import("../query.js");
   assert.ok(isTestPath("a/b.spec.ts") && isTestPath("tests/e2e/auth.ts") && !isTestPath("src/auth.ts"));
 });
+
+test("config: workflow, compose, k8s, Dockerfile and SQL are indexed with honest evidence", async () => {
+  const root = await fixture({
+    ".github/workflows/ci.yml": `name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@abc123\n      - uses: ./.github/actions/setup\n  deploy:\n    uses: ./.github/workflows/missing.yml\n`,
+    "compose.yaml": `services:\n  backend:\n    build:\n      context: ./backend\n    depends_on: [db]\n  db:\n    image: postgres:16\n  web:\n    build: ./web\n  api:\n    image: ${API_IMAGE:-local-api:dev}\n`,
+    "backend/Dockerfile": `FROM maven:3.9 AS build\nRUN true\nFROM eclipse-temurin:21\nCOPY --from=build /a /b\nFROM build AS again\n`,
+    "k8s/backend.yaml": `apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: backend\nspec:\n  template:\n    spec:\n      containers:\n        - name: app\n          image: ghcr.io/x/backend:1.2.3\n---\napiVersion: v1\nkind: Service\nmetadata:\n  name: backend\n`,
+    "db/V1__init.sql": `CREATE TABLE IF NOT EXISTS page_view (id int);\ncreate unique index idx_pv on page_view(id);\n`,
+    "bad.yml": `a: [unclosed\n  b: : :`,
+  });
+  const { graph } = await indexRepo(root);
+  const ids = new Set(graph.nodes.map((n) => n.id));
+  for (const id of ["sym:.github/workflows/ci.yml#job:test", "sym:.github/workflows/ci.yml#job:deploy", "sym:compose.yaml#service:backend",
+    "sym:backend/Dockerfile#stage:build", "sym:k8s/backend.yaml#Deployment/backend", "sym:k8s/backend.yaml#Service/backend",
+    "sym:db/V1__init.sql#page_view", "sym:db/V1__init.sql#idx_pv"]) assert.ok(ids.has(id), id);
+  const ev = (from: string, spec: string) => graph.edges.find((e) => e.from === `file:${from}` && e.specifier === spec)?.evidence;
+  assert.equal(ev("compose.yaml", "backend/Dockerfile"), "resolved");
+  assert.equal(ev("compose.yaml", "web/Dockerfile"), "unresolved");
+  assert.equal(ev("compose.yaml", "postgres"), "inferred");
+  assert.equal(ev("compose.yaml", "${API_IMAGE:-local-api:dev}"), "inferred", "interpolated image names are kept verbatim");
+  assert.equal(ev(".github/workflows/ci.yml", "actions/checkout"), "inferred");
+  assert.equal(ev(".github/workflows/ci.yml", ".github/workflows/missing.yml"), "unresolved");
+  assert.equal(ev("k8s/backend.yaml", "ghcr.io/x/backend"), "inferred");
+  assert.equal(ev("backend/Dockerfile", "maven"), "inferred");
+  assert.equal(graph.edges.some((e) => e.from === "file:backend/Dockerfile" && e.specifier === "build"), false, "FROM <stage> is not an image");
+  assert.equal(graph.files["bad.yml"].parseError, true);
+});
+
+test("config: pathological nesting does not crash the indexer", async () => {
+  const root = await fixture({ "deep.yml": "a: " + "[".repeat(20000) + "\n", "ok.yml": "k: v\n" });
+  const { graph } = await indexRepo(root);
+  assert.ok(graph.files["ok.yml"]);
+  assert.equal(graph.files["deep.yml"].parseError, true);
+});

@@ -32,6 +32,7 @@ discover -> parse (per file) -> link (all files) -> graph.json -> query -> CLI /
 | `query.ts` | find, deps, dependents, bounded related walk, budgeted task context |
 | `view.ts` | Self-contained HTML explorer generated from the graph: search, symbols per file, imports / imported-by with evidence badges. Repo-derived text is set via `textContent` (untrusted input). Not a graph drawing on purpose |
 | `java.ts` | Java via tree-sitter (WASM grammar, parse only): package, imports (incl. static and wildcard), top-level types with annotations (e.g. `@Path`, `@ApplicationScoped`), methods, `extends`/`implements` |
+| `config.ts` | Dockerfile (stages, base images), YAML (GitHub workflows: jobs and `uses`; docker compose: services, images, build context; Kubernetes: kind/name and images) and SQL (`CREATE TABLE/INDEX/VIEW/TYPE` by regex). Uses the `yaml` package (ISC, pinned, no code execution) |
 | `cli.ts` | `cbtg` commands |
 
 Language choice: TypeScript/Node, because the TS compiler API is the most accurate parser for TS/Angular and matches the primary stack. Python+tree-sitter was not evaluated yet; revisit when more languages are needed.
@@ -53,6 +54,12 @@ Per-file facts are cached by SHA-256 of content. Changed files are re-parsed, de
 - Not covered: same-package use without any import or extends (no edge), usages inside method bodies (no call graph), Maven/Gradle modules, annotation processing and generated sources, Kotlin/Scala. Overloaded methods share one node id.
 - Cached facts carry a parser version; facts from an older parser version are re-parsed.
 - Checked on a copy of Roy's portfolio repo (60 Java + 73 TS files): 133 files indexed in under a second, no parse errors, no unresolved own-package imports. That is a spot check, not an accuracy measurement.
+
+## Config and infrastructure files
+
+- Symbols: workflow jobs, compose services, Kubernetes `Kind/name`, Docker stages, SQL tables/indexes. Edges are `references`: compose `build` to the Dockerfile (`resolved` if indexed, else `unresolved`), local workflow `uses` likewise; container images and GitHub actions become `pkg:image:...` / `pkg:action:...` nodes and are `inferred` (the graph does not know what they contain).
+- Not covered: Helm templates and Kustomize overlays (templated YAML may be flagged `parseError`), `depends_on`/service-to-service links, linking an image to the compose service or k8s manifest that builds it, `package.json`/`pom.xml` dependency lists, `.properties`/`.env` keys (kept out on purpose: they often hold secrets), SQL beyond CREATE statements.
+- Security: YAML is parsed only; the parser is pinned to a version without the nested-collection stack-overflow advisory found by `npm audit` in 2.8.x, and a parse crash is caught and recorded as `parseError`.
 
 ## Known limits
 

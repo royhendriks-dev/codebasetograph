@@ -3,10 +3,16 @@ import * as path from "node:path";
 import { discover } from "./discover.js";
 import { parseFile, TS_PARSER_VERSION } from "./parse.js";
 import { parseJava, JAVA_PARSER_VERSION } from "./java.js";
+import { parseConfig, CONFIG_PARSER_VERSION } from "./config.js";
 import type { FileFacts, Graph, GraphEdge, GraphNode } from "./model.js";
 
 export const GRAPH_DIR = ".cbtg";
 export const GRAPH_FILE = "graph.json";
+
+export function languageOf(rel: string): "ts" | "java" | "config" {
+  if (rel.endsWith(".java")) return "java";
+  return /\.(ya?ml|sql)$/.test(rel) || /(^|\/)Dockerfile[^/]*$/.test(rel) ? "config" : "ts";
+}
 
 const CANDIDATE_EXTS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"];
 
@@ -45,6 +51,18 @@ export function link(files: Record<string, FileFacts>): { nodes: GraphNode[]; ed
       const id = `sym:${f.path}#${s.name}`;
       if (!nodes.has(id)) nodes.set(id, { id, kind: "symbol", path: f.path, ...s });
       edges.push({ from: fileId, to: id, kind: "declares", evidence: "extracted", line: s.lines?.[0] });
+    }
+    if (f.lang === "config") {
+      for (const imp of f.imports) {
+        const base = { from: fileId, specifier: imp.specifier, line: imp.line, kind: "references" as const };
+        if (imp.ref === "path") {
+          const hit = known.has(imp.specifier) ? imp.specifier : undefined;
+          edges.push({ ...base, to: `file:${hit ?? imp.specifier}`, evidence: hit ? "resolved" : "unresolved" });
+        } else {
+          edges.push({ ...base, to: pkgNode(`${imp.ref}:${imp.specifier}`), evidence: "inferred" });
+        }
+      }
+      continue;
     }
     if (f.lang === "java") {
       for (const imp of f.imports) {
@@ -105,10 +123,10 @@ export async function indexRepo(root: string): Promise<{ graph: Graph; stats: In
     const { createHash } = await import("node:crypto");
     const hash = createHash("sha256").update(text).digest("hex");
     const prev = previous?.files[rel];
-    const isJava = rel.endsWith(".java");
-    const parserVersion = isJava ? JAVA_PARSER_VERSION : TS_PARSER_VERSION;
+    const kind = languageOf(rel);
+    const parserVersion = { ts: TS_PARSER_VERSION, java: JAVA_PARSER_VERSION, config: CONFIG_PARSER_VERSION }[kind];
     if (prev && prev.hash === hash && prev.parser === parserVersion) { files[rel] = prev; reused++; }
-    else { files[rel] = isJava ? await parseJava(rel, text) : parseFile(rel, text); parsed++; }
+    else { files[rel] = kind === "java" ? await parseJava(rel, text) : kind === "config" ? parseConfig(rel, text) : parseFile(rel, text); parsed++; }
   }
   const removed = previous ? Object.keys(previous.files).filter((p) => !(p in files)).length : 0;
   const graph: Graph = { version: 1, root: path.basename(root), files, ...link(files), skipped };

@@ -1,0 +1,132 @@
+import { createHash } from "node:crypto";
+import * as path from "node:path";
+import { LineCounter, type Document, isMap, isScalar, isSeq, parseAllDocuments, type Node as YNode } from "yaml";
+import type { FileFacts } from "./model.js";
+
+export const CONFIG_PARSER_VERSION = "config-1";
+
+type Symbols = FileFacts["symbols"];
+type Imports = FileFacts["imports"];
+
+/** Image name without tag/digest. Strings with `${VAR}` interpolation stay as written: the real image is unknown. */
+const strip = (image: string) => (image.includes("${") ? image : image.replace(/@sha256:.*$/, "").replace(/:[^/:]+$/, ""));
+
+function plain(node: unknown, doc: Document): unknown {
+  return node && typeof (node as { toJS?: unknown }).toJS === "function" ? (node as { toJS: (d: Document) => unknown }).toJS(doc) : node;
+}
+const asObj = (v: unknown): Record<string, unknown> | undefined => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined);
+
+/** Dockerfile: stages and base images. Plain line parser, never executes anything. */
+function parseDockerfile(text: string, symbols: Symbols, imports: Imports): void {
+  text.split(/\r?\n/).forEach((raw, i) => {
+    const m = raw.match(/^\s*FROM\s+(?:--\S+\s+)?(\S+)(?:\s+AS\s+(\S+))?/i);
+    if (!m) return;
+    const line = i + 1;
+    if (m[2]) symbols.push({ name: `stage:${m[2]}`, detail: "docker stage", lines: [line, line] });
+    // `FROM <earlier stage>` is not an image
+    if (!symbols.some((s) => s.name === `stage:${m[1]}`) && m[1] !== "scratch") {
+      imports.push({ specifier: strip(m[1]), names: ["FROM"], line, reexport: false, dynamic: false, ref: "image" });
+    }
+  });
+}
+
+/** SQL: CREATE TABLE/INDEX/VIEW/TYPE by regex. Heuristic, not a SQL parser. */
+function parseSql(text: string, symbols: Symbols): void {
+  const re = /create\s+(?:or\s+replace\s+)?(?:unique\s+)?(table|index|view|type|materialized\s+view)\s+(?:if\s+not\s+exists\s+)?("?[\w.]+"?)/gi;
+  for (const m of text.matchAll(re)) {
+    const line = text.slice(0, m.index).split("\n").length;
+    symbols.push({ name: m[2].replace(/"/g, ""), detail: `sql ${m[1].toLowerCase().replace(/\s+/g, " ")}`, lines: [line, line] });
+  }
+}
+
+function collectImages(v: unknown, out: string[], depth = 0): void {
+  if (depth > 40 || !v || typeof v !== "object") return;
+  if (Array.isArray(v)) { v.forEach((x) => collectImages(x, out, depth + 1)); return; }
+  for (const [k, x] of Object.entries(v)) {
+    if (k === "image" && typeof x === "string") out.push(x);
+    else collectImages(x, out, depth + 1);
+  }
+}
+
+function parseYaml(relPath: string, text: string, symbols: Symbols, imports: Imports): boolean {
+  const lc = new LineCounter();
+  const docs = parseAllDocuments(text, { lineCounter: lc });
+  const isWorkflow = /(^|\/)\.github\/workflows\/[^/]+\.ya?ml$/.test(relPath);
+  const lineOf = (n: YNode | null | undefined) => (n && n.range ? lc.linePos(n.range[0]).line : 1);
+  let error = false;
+
+  for (const doc of docs) {
+    if (doc.errors.length) error = true;
+    const root = doc.contents;
+    if (!isMap(root)) continue;
+    const top = (key: string) => root.items.find((p) => isScalar(p.key) && p.key.value === key);
+
+    const jobs = isWorkflow ? top("jobs") : undefined;
+    if (jobs && isMap(jobs.value)) {
+      for (const j of jobs.value.items) {
+        if (!isScalar(j.key)) continue;
+        const start = lineOf(j.key as YNode), end = j.value && (j.value as YNode).range ? lc.linePos((j.value as YNode).range![1]).line : start;
+        symbols.push({ name: `job:${String(j.key.value)}`, detail: "workflow job", lines: [start, end] });
+      }
+      const uses: Array<{ spec: string; line: number }> = [];
+      const walk = (n: unknown) => {
+        if (isMap(n)) for (const p of n.items) {
+          if (isScalar(p.key) && p.key.value === "uses" && isScalar(p.value) && typeof p.value.value === "string") uses.push({ spec: p.value.value, line: lineOf(p.value as YNode) });
+          else walk(p.value);
+        } else if (isSeq(n)) n.items.forEach(walk);
+      };
+      walk(jobs.value);
+      for (const u of uses) {
+        if (u.spec.startsWith("./")) imports.push({ specifier: u.spec.replace(/^\.\//, ""), names: ["uses"], line: u.line, reexport: false, dynamic: false, ref: "path" });
+        else if (!u.spec.startsWith("docker://")) imports.push({ specifier: u.spec.replace(/@.*$/, ""), names: ["uses"], line: u.line, reexport: false, dynamic: false, ref: "action" });
+      }
+      continue;
+    }
+
+    const services = top("services");
+    if (services && isMap(services.value)) { // docker compose
+      for (const s of services.value.items) {
+        if (!isScalar(s.key)) continue;
+        const name = String(s.key.value), line = lineOf(s.key as YNode);
+        const end = s.value && (s.value as YNode).range ? lc.linePos((s.value as YNode).range![1]).line : line;
+        symbols.push({ name: `service:${name}`, detail: "compose service", lines: [line, end] });
+        const cfg = asObj(plain(s.value, doc));
+        if (!cfg) continue;
+        if (typeof cfg.image === "string") imports.push({ specifier: strip(cfg.image), names: ["image"], line, reexport: false, dynamic: false, ref: "image" });
+        const b = cfg.build;
+        const ctx = typeof b === "string" ? b : typeof asObj(b)?.context === "string" ? (asObj(b)!.context as string) : undefined;
+        if (ctx !== undefined) {
+          const df = typeof asObj(b)?.dockerfile === "string" ? (asObj(b)!.dockerfile as string) : "Dockerfile";
+          const dir = path.posix.normalize(path.posix.join(path.posix.dirname(relPath), ctx));
+          imports.push({ specifier: path.posix.join(dir, df), names: ["build"], line, reexport: false, dynamic: false, ref: "path" });
+        }
+      }
+      continue;
+    }
+
+    const j = asObj(plain(root, doc));
+    if (j && typeof j.apiVersion === "string" && typeof j.kind === "string") { // kubernetes
+      const name = asObj(j.metadata)?.name;
+      const line = lineOf(root as YNode);
+      symbols.push({ name: `${j.kind}/${typeof name === "string" ? name : "?"}`, detail: `k8s ${j.kind}`, lines: [line, lc.linePos(root.range![1]).line] });
+      const images: string[] = [];
+      collectImages(j, images);
+      for (const im of images) imports.push({ specifier: strip(im), names: ["image"], line, reexport: false, dynamic: false, ref: "image" });
+    }
+  }
+  return error;
+}
+
+/** Parses Dockerfiles, YAML (GitHub workflows, docker compose, Kubernetes) and SQL. Content is only parsed, never executed. */
+export function parseConfig(relPath: string, text: string): FileFacts {
+  const facts: FileFacts = { path: relPath, hash: createHash("sha256").update(text).digest("hex"), lang: "config", parser: CONFIG_PARSER_VERSION, parseError: false, symbols: [], imports: [] };
+  try {
+    const base = path.posix.basename(relPath);
+    if (/^Dockerfile/.test(base)) parseDockerfile(text, facts.symbols, facts.imports);
+    else if (base.endsWith(".sql")) parseSql(text, facts.symbols);
+    else facts.parseError = parseYaml(relPath, text, facts.symbols, facts.imports);
+  } catch {
+    facts.parseError = true; // e.g. pathological nesting: keep whatever was collected, flag the file
+  }
+  return facts;
+}
