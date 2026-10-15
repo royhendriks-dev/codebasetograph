@@ -41,6 +41,10 @@ export interface FileFacts {
   elements?: string[];
   /** Java only: simple names of types used in this file (declared types excluded), for same-package links without an import. */
   javaTypes?: string[];
+  /** TS/JS: URL-like string literals (start with "/", template parts as `{}`), used to link a client to the backend route it calls. */
+  urls?: string[];
+  /** Java only: full JAX-RS routes (class `@Path` + method `@Path`), path parameters as `{name}`. */
+  routes?: string[];
   /** Java only: declared package. */
   javaPackage?: string;
   symbols: Array<Omit<GraphNode, "id" | "kind" | "path"> & { name: string }>;

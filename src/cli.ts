@@ -1,18 +1,20 @@
 #!/usr/bin/env node
-import { indexRepo, loadGraph } from "./build.js";
+import { graphDirOf, indexRepo, loadGraph } from "./build.js";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { renderHtml } from "./view.js";
 import { renderGraphHtml, DEFAULT_MAX_NODES } from "./viewGraph.js";
+import { loadSynonyms } from "./words.js";
 import { loadTasks, renderReport, runBenchmark } from "./bench.js";
 import { context, dependencies, dependents, explain, findSymbols, related, resolveTarget, shortestPath } from "./query.js";
 
 const [cmd, ...rest] = process.argv.slice(2);
 const flag = (n: string) => { const i = rest.indexOf(`--${n}`); return i >= 0 ? rest[i + 1] : undefined; };
 const root = flag("root") ?? process.cwd();
+const graphDir = flag("graph-dir");
 const positional = rest.filter((a, i) => !a.startsWith("--") && !(rest[i - 1] ?? "").startsWith("--"));
 
-const usage = `cbtg <command> [--root dir]
+const usage = `cbtg <command> [--root dir] [--graph-dir dir]   (--graph-dir keeps the graph outside the repo, which then stays untouched)
   index                       build or update .cbtg/graph.json
   find <term>                 symbols and files whose name contains term
   deps <file>                 what <file> imports
@@ -22,18 +24,19 @@ const usage = `cbtg <command> [--root dir]
   path <from> <to>            shortest chain of resolved links between two files or symbols
   view [--out file]           write a self-contained HTML explorer (default .cbtg/graph.html)
   view --graph [--max-nodes n] [--out file]   drawn file graph (default .cbtg/graph-map.html, 400 nodes)
-  bench <tasks.json> [--files n] [--budget tokens]   compare grep baseline with graph context on tasks with known relevant files
-  context "<task>" [--budget tokens]   pointer list of task-relevant code`;
+  bench <tasks.json> [--files n] [--budget tokens] [--synonyms file.json]   compare grep baseline with graph context on tasks with known relevant files
+  context "<task>" [--budget tokens] [--synonyms file.json]   pointer list of task-relevant code (Dutch words are mapped to English; the optional file adds your own, {"inloggen":["login"]})`;
 
 async function main() {
   if (cmd === "index") {
-    const { stats, graph } = await indexRepo(root);
+    const { stats, graph } = await indexRepo(root, graphDir);
     console.log(`indexed ${stats.files} files (parsed ${stats.parsed}, reused ${stats.reused}, removed ${stats.removed}); ${graph.nodes.length} nodes, ${graph.edges.length} edges, ${graph.skipped.length} skipped`);
     return;
   }
-  const g = await loadGraph(root);
+  const g = await loadGraph(root, graphDir);
   if (!g) { console.error("no graph found; run `cbtg index` first"); process.exit(1); }
   const arg = positional[0] ?? "";
+  const synonyms = async () => (flag("synonyms") ? loadSynonyms(path.resolve(flag("synonyms")!)) : {});
   const fmt = (e: { from: string; to: string; evidence: string; line?: number; specifier?: string }, side: "from" | "to") =>
     `${e[side].replace(/^(file|pkg):/, "")}${e.line ? `:${e.line}` : ""} [${e.evidence}]${e.evidence === "unresolved" ? ` (${e.specifier})` : ""}`;
   switch (cmd) {
@@ -65,7 +68,7 @@ async function main() {
     }
     case "view": {
       const map = process.argv.includes("--graph");
-      const out = path.resolve(flag("out") ?? path.join(root, ".cbtg", map ? "graph-map.html" : "graph.html"));
+      const out = path.resolve(flag("out") ?? path.join(graphDirOf(root, graphDir), map ? "graph-map.html" : "graph.html"));
       const max = Number(flag("max-nodes") ?? DEFAULT_MAX_NODES);
       if (!Number.isInteger(max) || max < 1) { console.error("--max-nodes must be a positive integer"); process.exit(2); }
       await fs.mkdir(path.dirname(out), { recursive: true });
@@ -73,10 +76,10 @@ async function main() {
       console.log(`wrote ${out}`);
       break;
     }
-    case "context": { const r = context(g, arg, Number(flag("budget") ?? 800)); console.log(r.text); if (r.truncated) console.log("(truncated by budget)"); break; }
+    case "context": { const r = context(g, arg, Number(flag("budget") ?? 800), await synonyms()); console.log(r.text); if (r.truncated) console.log("(truncated by budget)"); break; }
     case "bench": {
       if (!arg) { console.error("usage: cbtg bench <tasks.json>"); process.exit(1); }
-      const opts = { maxFiles: Number(flag("files") ?? 5), budget: Number(flag("budget") ?? 800) };
+      const opts = { maxFiles: Number(flag("files") ?? 5), budget: Number(flag("budget") ?? 800), synonyms: await synonyms() };
       console.log(renderReport(await runBenchmark(path.resolve(root), g, await loadTasks(path.resolve(arg)), opts), opts));
       break;
     }

@@ -35,6 +35,18 @@ function annotationsOf(n: Node): string[] {
     .map((c) => c.childForFieldName("name")?.text ?? "")
     .filter(Boolean);
 }
+/** String value of `@Path("...")` on a class or method, if present. */
+function pathOf(n: Node): string | undefined {
+  const mods = kids(n).find((c) => c.type === "modifiers");
+  for (const a of kids(mods)) {
+    if (a.type !== "annotation" || a.childForFieldName("name")?.text !== "Path") continue;
+    const lit = a.descendantsOfType("string_literal")[0];
+    const t = lit?.text;
+    return t && t.length >= 2 ? t.slice(1, -1) : undefined;
+  }
+  return undefined;
+}
+const joinRoute = (a: string, b: string) => ("/" + a + "/" + b).replace(/\/+/g, "/").replace(/(.)\/$/, "$1");
 const hasModifier = (n: Node, m: string) => allKids(kids(n).find((c) => c.type === "modifiers") ?? n).some((c) => c.type === m);
 
 export async function parseJava(relPath: string, text: string): Promise<FileFacts> {
@@ -69,10 +81,14 @@ export async function parseJava(relPath: string, text: string): Promise<FileFact
       ].filter((t): t is Node => t !== null).map((t) => t.text);
       // heritage is stored as pseudo-imports of simple names; linking resolves them through imports/package
       for (const h of heritage) facts.imports.push({ specifier: h, names: ["extends"], line: line(c), reexport: false, dynamic: false });
+      const base = pathOf(c);
+      if (base !== undefined) (facts.routes ??= []).push(joinRoute(base, ""));
       const body = c.childForFieldName("body");
       for (const m of kids(body)) {
         if (m.type === "method_declaration" || m.type === "constructor_declaration") {
           const mn = m.childForFieldName("name")?.text;
+          const sub = base !== undefined ? pathOf(m) : undefined;
+          if (sub !== undefined) (facts.routes ??= []).push(joinRoute(base!, sub));
           if (mn) facts.symbols.push({ name: `${name}.${mn}`, detail: ["method", ...annotationsOf(m).map((a) => "@" + a)].join(" "), lines: lines(m), exported: hasModifier(m, "public") });
         }
       }

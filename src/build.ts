@@ -7,6 +7,7 @@ import { parseConfig, CONFIG_PARSER_VERSION } from "./config.js";
 import { parseAsset, ASSET_PARSER_VERSION } from "./asset.js";
 import { aliasFor, loadAliases, type Alias } from "./tsconfig.js";
 import type { FileFacts, Graph, GraphEdge, GraphNode } from "./model.js";
+import { isTestPath } from "./query.js";
 
 export const GRAPH_DIR = ".cbtg";
 export const GRAPH_FILE = "graph.json";
@@ -133,6 +134,8 @@ export function link(files: Record<string, FileFacts>, aliases: Alias[] = []): {
     }
   }
   linkSelectors(files, edges);
+  linkRoutes(files, edges);
+  linkTests(files, edges);
   return { nodes: [...nodes.values()], edges };
 }
 
@@ -176,12 +179,73 @@ function linkSelectors(files: Record<string, FileFacts>, edges: GraphEdge[]): vo
   }
 }
 
+const routeParts = (r: string) => r.split("/").filter(Boolean).map((p) => (p.startsWith("{") ? "{}" : p));
+
+/**
+ * Client to backend: a URL-like literal in a TS file and a JAX-RS route in a Java file point at each other when their
+ * path segments agree (`{x}` matches any one segment) up to the shorter of the two, over at least two segments. The
+ * shorter side is a prefix because a client often keeps only the base ("/api/auth") and appends the rest. Evidence is
+ * `inferred`: a string that looks like a route is not proof that it is called.
+ */
+function linkRoutes(files: Record<string, FileFacts>, edges: GraphEdge[]): void {
+  const backend = Object.values(files).filter((f) => f.routes?.length);
+  if (!backend.length) return;
+  const seen = new Set<string>();
+  for (const f of Object.values(files)) {
+    for (const url of f.urls ?? []) {
+      const u = routeParts(url);
+      // a `{param}` segment may swallow a literal one ('/api/auth' fits '/api/{game}/x'), so keep only the best exact fits
+      const hits: Array<{ path: string; exact: number }> = [];
+      for (const b of backend) {
+        let best = -1;
+        for (const r of b.routes!) {
+          const rp = routeParts(r), n = Math.min(u.length, rp.length);
+          if (n < 2 || !u.slice(0, n).every((seg, i) => seg === rp[i] || seg === "{}" || rp[i] === "{}")) continue;
+          best = Math.max(best, u.slice(0, n).filter((seg, i) => seg === rp[i]).length);
+        }
+        if (best >= 0) hits.push({ path: b.path, exact: best });
+      }
+      const top = Math.max(0, ...hits.map((h) => h.exact));
+      for (const h of hits) {
+        const key = `${f.path}>${h.path}`;
+        if (h.exact === top && !seen.has(key)) { seen.add(key); edges.push({ from: `file:${f.path}`, to: `file:${h.path}`, kind: "references", evidence: "inferred", specifier: url }); }
+      }
+    }
+  }
+}
+
+/**
+ * Test files by naming convention: `foo.spec.ts` / `foo.test.ts` next to `foo.ts`, `FooTest.java` (also Tests, IT) for the
+ * unique `Foo.java`. Convention, not proof, so the evidence is `inferred`; skipped when the test already imports its subject.
+ */
+function linkTests(files: Record<string, FileFacts>, edges: GraphEdge[]): void {
+  const known = new Set(Object.keys(files));
+  const javaByName = new Map<string, string[]>();
+  for (const p of known) if (p.endsWith(".java") && !isTestPath(p)) javaByName.set(path.posix.basename(p, ".java"), [...(javaByName.get(path.posix.basename(p, ".java")) ?? []), p]);
+  const linked = new Set(edges.map((e) => `${e.from}>${e.to}`));
+  for (const t of known) {
+    let subject: string | undefined;
+    const ts = t.match(/^(.*)\.(?:spec|test)\.([cm]?[jt]sx?)$/);
+    if (ts) subject = [`${ts[1]}.${ts[2]}`, `${ts[1]}.ts`, `${ts[1]}.tsx`].find((c) => known.has(c) && c !== t);
+    else if (t.endsWith(".java")) {
+      const m = path.posix.basename(t, ".java").match(/^(.+?)(?:Tests?|IT)$/);
+      const c = m ? javaByName.get(m[1]) : undefined;
+      if (c?.length === 1) subject = c[0];
+    }
+    if (!subject || linked.has(`file:${t}>file:${subject}`)) continue;
+    edges.push({ from: `file:${t}`, to: `file:${subject}`, kind: "references", evidence: "inferred", specifier: "test of" });
+  }
+}
+
 export interface IndexStats { parsed: number; reused: number; removed: number; files: number }
 
+/** Where the graph lives: `graphDir` when given (so a read-only repo is never written to), else `<root>/.cbtg`. */
+export const graphDirOf = (root: string, graphDir?: string) => path.resolve(graphDir ?? path.join(root, GRAPH_DIR));
+
 /** Indexes `root`. Re-parses only files whose content hash changed; links are always rebuilt. */
-export async function indexRepo(root: string): Promise<{ graph: Graph; stats: IndexStats }> {
+export async function indexRepo(root: string, graphDir?: string): Promise<{ graph: Graph; stats: IndexStats }> {
   root = path.resolve(root);
-  const previous = await loadGraph(root);
+  const previous = await loadGraph(root, graphDir);
   const { files: found, configs, skipped } = await discover(root);
   const aliases = await loadAliases(root, configs);
   const files: Record<string, FileFacts> = {};
@@ -200,7 +264,7 @@ export async function indexRepo(root: string): Promise<{ graph: Graph; stats: In
   }
   const removed = previous ? Object.keys(previous.files).filter((p) => !(p in files)).length : 0;
   const graph: Graph = { version: 1, root: path.basename(root), files, aliases, ...link(files, aliases), skipped };
-  const dir = path.join(root, GRAPH_DIR);
+  const dir = graphDirOf(root, graphDir);
   await fs.mkdir(dir, { recursive: true });
   const tmp = path.join(dir, GRAPH_FILE + ".tmp");
   await fs.writeFile(tmp, JSON.stringify(graph));
@@ -208,9 +272,9 @@ export async function indexRepo(root: string): Promise<{ graph: Graph; stats: In
   return { graph, stats: { parsed, reused, removed, files: found.length } };
 }
 
-export async function loadGraph(root: string): Promise<Graph | undefined> {
+export async function loadGraph(root: string, graphDir?: string): Promise<Graph | undefined> {
   try {
-    const g = JSON.parse(await fs.readFile(path.join(root, GRAPH_DIR, GRAPH_FILE), "utf8")) as Graph;
+    const g = JSON.parse(await fs.readFile(path.join(graphDirOf(root, graphDir), GRAPH_FILE), "utf8")) as Graph;
     return g.version === 1 ? g : undefined; // unknown/corrupt version => full rebuild
   } catch { return undefined; }
 }
