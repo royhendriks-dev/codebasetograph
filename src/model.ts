@@ -45,10 +45,13 @@ export interface FileFacts {
   urls?: string[];
   /** Java only: full JAX-RS routes (class `@Path` + method `@Path`), path parameters as `{name}`. */
   routes?: string[];
+  /** Kubernetes: `spec.selector` of a Service, and pod template labels of workloads, to link a Service to what it routes to. */
+  k8sSelectors?: Array<Record<string, string>>;
+  k8sPodLabels?: Array<Record<string, string>>;
   /** Java only: declared package. */
   javaPackage?: string;
   symbols: Array<Omit<GraphNode, "id" | "kind" | "path"> & { name: string }>;
-  imports: Array<{ specifier: string; names: string[]; line: number; reexport: boolean; dynamic: boolean; wildcard?: boolean; ref?: "path" | "image" | "action" | "object" | "doc" }>;
+  imports: Array<{ specifier: string; names: string[]; line: number; reexport: boolean; dynamic: boolean; wildcard?: boolean; ref?: "path" | "image" | "action" | "object" | "doc" | "service" }>;
 }
 
 export interface Graph {
