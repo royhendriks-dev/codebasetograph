@@ -46,6 +46,9 @@ export function link(files: Record<string, FileFacts>, aliases: Alias[] = []): {
     byPackage.set(pkg, [...(byPackage.get(pkg) ?? []), f.path]);
     for (const sym of f.symbols) if (!sym.name.includes(".")) byFqn.set(pkg ? `${pkg}.${sym.name}` : sym.name, f.path);
   }
+  // k8s `Kind/name` -> declaring files
+  const objectOwners = new Map<string, string[]>();
+  for (const f of Object.values(files)) if (f.lang === "config") for (const sym of f.symbols) if (sym.detail?.startsWith("k8s ")) objectOwners.set(sym.name, [...(objectOwners.get(sym.name) ?? []), f.path]);
   const pkgNode = (name: string) => {
     const id = `pkg:${name}`;
     if (!nodes.has(id)) nodes.set(id, { id, kind: "package", name });
@@ -63,8 +66,14 @@ export function link(files: Record<string, FileFacts>, aliases: Alias[] = []): {
       for (const imp of f.imports) {
         const base = { from: fileId, specifier: imp.specifier, line: imp.line, kind: "references" as const };
         if (imp.ref === "path") {
-          const hit = known.has(imp.specifier) ? imp.specifier : undefined;
+          // a kustomize resource may be a directory: its kustomization file is the target
+          const hit = [imp.specifier, `${imp.specifier}/kustomization.yaml`, `${imp.specifier}/kustomization.yml`].find((c) => known.has(c));
           edges.push({ ...base, to: `file:${hit ?? imp.specifier}`, evidence: hit ? "resolved" : "unresolved" });
+        } else if (imp.ref === "object") {
+          // Kind/name declared in exactly one other indexed file. Namespace is not checked, so only "inferred".
+          const owners = objectOwners.get(imp.specifier)?.filter((p) => p !== f.path) ?? [];
+          if (owners.length === 1) edges.push({ ...base, to: `file:${owners[0]}`, evidence: "inferred" });
+          else if (owners.length === 0 && !objectOwners.get(imp.specifier)) edges.push({ ...base, to: pkgNode(`k8s:${imp.specifier}`), evidence: "unresolved" });
         } else {
           edges.push({ ...base, to: pkgNode(`${imp.ref}:${imp.specifier}`), evidence: "inferred" });
         }
