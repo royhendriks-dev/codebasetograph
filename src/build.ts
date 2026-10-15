@@ -7,6 +7,7 @@ import { parseConfig, CONFIG_PARSER_VERSION } from "./config.js";
 import { parseAsset, ASSET_PARSER_VERSION } from "./asset.js";
 import { aliasFor, loadAliases, type Alias } from "./tsconfig.js";
 import type { FileFacts, Graph, GraphEdge, GraphNode } from "./model.js";
+import { isTestPath } from "./query.js";
 
 export const GRAPH_DIR = ".cbtg";
 export const GRAPH_FILE = "graph.json";
@@ -124,6 +125,7 @@ export function link(files: Record<string, FileFacts>, aliases: Alias[] = []): {
     }
   }
   linkSelectors(files, edges);
+  linkTests(files, edges);
   return { nodes: [...nodes.values()], edges };
 }
 
@@ -164,6 +166,29 @@ function linkSelectors(files: Record<string, FileFacts>, edges: GraphEdge[]): vo
       const o = owners.get(el);
       if (o?.length === 1 && o[0] !== f.path) edges.push({ from: `file:${f.path}`, to: `file:${o[0]}`, kind: "references", evidence: "inferred", specifier: `<${el}>` });
     }
+  }
+}
+
+/**
+ * Test files by naming convention: `foo.spec.ts` / `foo.test.ts` next to `foo.ts`, `FooTest.java` (also Tests, IT) for the
+ * unique `Foo.java`. Convention, not proof, so the evidence is `inferred`; skipped when the test already imports its subject.
+ */
+function linkTests(files: Record<string, FileFacts>, edges: GraphEdge[]): void {
+  const known = new Set(Object.keys(files));
+  const javaByName = new Map<string, string[]>();
+  for (const p of known) if (p.endsWith(".java") && !isTestPath(p)) javaByName.set(path.posix.basename(p, ".java"), [...(javaByName.get(path.posix.basename(p, ".java")) ?? []), p]);
+  const linked = new Set(edges.map((e) => `${e.from}>${e.to}`));
+  for (const t of known) {
+    let subject: string | undefined;
+    const ts = t.match(/^(.*)\.(?:spec|test)\.([cm]?[jt]sx?)$/);
+    if (ts) subject = [`${ts[1]}.${ts[2]}`, `${ts[1]}.ts`, `${ts[1]}.tsx`].find((c) => known.has(c) && c !== t);
+    else if (t.endsWith(".java")) {
+      const m = path.posix.basename(t, ".java").match(/^(.+?)(?:Tests?|IT)$/);
+      const c = m ? javaByName.get(m[1]) : undefined;
+      if (c?.length === 1) subject = c[0];
+    }
+    if (!subject || linked.has(`file:${t}>file:${subject}`)) continue;
+    edges.push({ from: `file:${t}`, to: `file:${subject}`, kind: "references", evidence: "inferred", specifier: "test of" });
   }
 }
 
