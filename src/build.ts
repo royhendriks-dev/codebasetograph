@@ -15,7 +15,7 @@ export const GRAPH_FILE = "graph.json";
 export function languageOf(rel: string): "ts" | "java" | "config" | "asset" {
   if (rel.endsWith(".java")) return "java";
   if (/\.(html|scss|css)$/.test(rel)) return "asset";
-  return /\.(ya?ml|sql|conf|properties)$/.test(rel) || /(^|\/)\.env[^/]*$/.test(rel) || /(^|\/)Dockerfile[^/]*$/.test(rel) ? "config" : "ts";
+  return /\.(ya?ml|sql|conf|properties|md)$/.test(rel) || /(^|\/)\.env[^/]*$/.test(rel) || /(^|\/)Dockerfile[^/]*$/.test(rel) ? "config" : "ts";
 }
 
 const CANDIDATE_EXTS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"];
@@ -70,6 +70,9 @@ export function link(files: Record<string, FileFacts>, aliases: Alias[] = []): {
           // a kustomize resource may be a directory: its kustomization file is the target
           const hit = [imp.specifier, `${imp.specifier}/kustomization.yaml`, `${imp.specifier}/kustomization.yml`].find((c) => known.has(c));
           edges.push({ ...base, to: `file:${hit ?? imp.specifier}`, evidence: hit ? "resolved" : "unresolved" });
+        } else if (imp.ref === "doc") {
+          // a link in a Markdown file: only existing indexed files become edges (images, URLs and missing targets are not noise)
+          if (known.has(imp.specifier)) edges.push({ ...base, to: `file:${imp.specifier}`, evidence: "resolved" });
         } else if (imp.ref === "object") {
           // Kind/name declared in exactly one other indexed file. Namespace is not checked, so only "inferred".
           const owners = objectOwners.get(imp.specifier)?.filter((p) => p !== f.path) ?? [];

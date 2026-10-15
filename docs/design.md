@@ -92,3 +92,8 @@ Per-file facts are cached by SHA-256 of content. Changed files are re-parsed, de
 ## Config keys (`.properties`, `.env.example`)
 
 - Only key names become symbols (`config key`); values are never read into the graph because they may be secrets. A real `.env` is never indexed, only `.env.example`/`.sample`/`.template`. Max 500 keys per file, parser `config-5`. Quoted keys with spaces are not recognised.
+
+## Markdown
+
+- `.md` files: headings (h1-h6, outside code fences, max 300) become symbols (`md hN`); relative links to indexed files become `references` edges, evidence `resolved` (URLs, images, missing targets and links leaving the repo give no edge). Parser `config-6`.
+- Ranking: Markdown files and headings count x0.3 in `context`, like tests. Measured on the portfolio copy (30 code-edit tasks): graph recall 72% to 70%, tokens 5.5k to 6.6k; the grep baseline also drops (51% to 32%) because docs add matches. The tasks all target code, so this cost is expected; a documentation question is not covered by this benchmark.

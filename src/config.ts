@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { LineCounter, type Document, isMap, isScalar, isSeq, parseAllDocuments, type Node as YNode } from "yaml";
 import type { FileFacts } from "./model.js";
 
-export const CONFIG_PARSER_VERSION = "config-5";
+export const CONFIG_PARSER_VERSION = "config-6";
 
 type Symbols = FileFacts["symbols"];
 type Imports = FileFacts["imports"];
@@ -79,6 +79,27 @@ function parseKeys(text: string, symbols: Symbols): void {
     if (!m || /^\s*[#!]/.test(raw) || seen.has(m[1]) || seen.size >= 500) return;
     seen.add(m[1]);
     symbols.push({ name: m[1], detail: "config key", lines: [i + 1, i + 1] });
+  });
+}
+
+/** Markdown: headings become symbols (outside code fences); relative links become `doc` references. Text is only parsed, never rendered. */
+function parseMarkdown(relPath: string, text: string, symbols: Symbols, imports: Imports): void {
+  const dir = path.posix.dirname(relPath);
+  let fence = false;
+  const seen = new Set<string>();
+  text.split(/\r?\n/).forEach((raw, i) => {
+    if (/^\s*(```|~~~)/.test(raw)) { fence = !fence; return; }
+    if (fence) return;
+    const h = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(raw);
+    if (h && symbols.length < 300) symbols.push({ name: h[2].slice(0, 120), detail: `md h${h[1].length}`, lines: [i + 1, i + 1] });
+    for (const m of raw.matchAll(/\]\(([^)\s]+)\)/g)) {
+      const target = m[1].split("#")[0];
+      if (!target || /^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith("/")) continue;
+      const spec = path.posix.normalize(path.posix.join(dir, decodeURI(target)));
+      if (spec.startsWith("..") || seen.has(spec)) continue;
+      seen.add(spec);
+      imports.push({ specifier: spec, names: ["link"], line: i + 1, reexport: false, dynamic: false, ref: "doc" });
+    }
   });
 }
 
@@ -209,6 +230,7 @@ export function parseConfig(relPath: string, text: string): FileFacts {
     const base = path.posix.basename(relPath);
     if (/^Dockerfile/.test(base)) parseDockerfile(text, facts.symbols, facts.imports);
     else if (base.endsWith(".conf")) parseNginx(text, facts.symbols);
+    else if (base.endsWith(".md")) parseMarkdown(relPath, text, facts.symbols, facts.imports);
     else if (base.endsWith(".properties") || /^\.env/.test(base)) parseKeys(text, facts.symbols);
     else if (base.endsWith(".sql")) parseSql(text, facts.symbols);
     else facts.parseError = parseYaml(relPath, text, facts.symbols, facts.imports);
