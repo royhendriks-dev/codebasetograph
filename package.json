@@ -19,7 +19,8 @@
   "dependencies": {
     "tree-sitter-wasms": "0.1.13",
     "typescript": "^5.6.0",
-    "web-tree-sitter": "0.25.10"
+    "web-tree-sitter": "0.25.10",
+    "yaml": "2.9.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0"

@@ -157,6 +157,94 @@ test("context ranking: source ranks above specs; stopwords ignored; exported sym
   assert.ok(isTestPath("a/b.spec.ts") && isTestPath("tests/e2e/auth.ts") && !isTestPath("src/auth.ts"));
 });
 
+test("config: workflow, compose, k8s, Dockerfile and SQL are indexed with honest evidence", async () => {
+  const root = await fixture({
+    ".github/workflows/ci.yml": `name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@abc123\n      - uses: ./.github/actions/setup\n  deploy:\n    uses: ./.github/workflows/missing.yml\n`,
+    "compose.yaml": `services:\n  backend:\n    build:\n      context: ./backend\n    depends_on: [db]\n  db:\n    image: postgres:16\n  web:\n    build: ./web\n  api:\n    image: \${API_IMAGE:-local-api:dev}\n`,
+    "backend/Dockerfile": `FROM maven:3.9 AS build\nRUN true\nFROM eclipse-temurin:21\nCOPY --from=build /a /b\nFROM build AS again\n`,
+    "k8s/backend.yaml": `apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: backend\nspec:\n  template:\n    spec:\n      containers:\n        - name: app\n          image: ghcr.io/x/backend:1.2.3\n---\napiVersion: v1\nkind: Service\nmetadata:\n  name: backend\n`,
+    "db/V1__init.sql": `CREATE TABLE IF NOT EXISTS page_view (id int);\ncreate unique index idx_pv on page_view(id);\n`,
+    "bad.yml": `a: [unclosed\n  b: : :`,
+  });
+  const { graph } = await indexRepo(root);
+  const ids = new Set(graph.nodes.map((n) => n.id));
+  for (const id of ["sym:.github/workflows/ci.yml#job:test", "sym:.github/workflows/ci.yml#job:deploy", "sym:compose.yaml#service:backend",
+    "sym:backend/Dockerfile#stage:build", "sym:k8s/backend.yaml#Deployment/backend", "sym:k8s/backend.yaml#Service/backend",
+    "sym:db/V1__init.sql#page_view", "sym:db/V1__init.sql#idx_pv"]) assert.ok(ids.has(id), id);
+  const ev = (from: string, spec: string) => graph.edges.find((e) => e.from === `file:${from}` && e.specifier === spec)?.evidence;
+  assert.equal(ev("compose.yaml", "backend/Dockerfile"), "resolved");
+  assert.equal(ev("compose.yaml", "web/Dockerfile"), "unresolved");
+  assert.equal(ev("compose.yaml", "postgres"), "inferred");
+  assert.equal(ev("compose.yaml", "${API_IMAGE:-local-api:dev}"), "inferred", "interpolated image names are kept verbatim");
+  assert.equal(ev(".github/workflows/ci.yml", "actions/checkout"), "inferred");
+  assert.equal(ev(".github/workflows/ci.yml", ".github/workflows/missing.yml"), "unresolved");
+  assert.equal(ev("k8s/backend.yaml", "ghcr.io/x/backend"), "inferred");
+  assert.equal(ev("backend/Dockerfile", "maven"), "inferred");
+  assert.equal(graph.edges.some((e) => e.from === "file:backend/Dockerfile" && e.specifier === "build"), false, "FROM <stage> is not an image");
+  assert.equal(graph.files["bad.yml"].parseError, true);
+});
+
+test("config: pathological nesting does not crash the indexer", async () => {
+  const root = await fixture({ "deep.yml": "a: " + "[".repeat(20000) + "\n", "ok.yml": "k: v\n" });
+  const { graph } = await indexRepo(root);
+  assert.ok(graph.files["ok.yml"]);
+  assert.equal(graph.files["deep.yml"].parseError, true);
+});
+
+test("angular: templateUrl/styleUrl resolve, template tags link to unique component selectors (inferred)", async () => {
+  const root = await fixture({
+    "src/app/shell.ts": `import { Component } from '@angular/core';\n@Component({ selector: 'app-shell', templateUrl: 'shell.html', styleUrls: ['./shell.scss', './nope.scss'] })\nexport class Shell {}\n`,
+    "src/app/shell.html": `<app-login></app-login>\n<app-dup/>\n<mat-icon></mat-icon>\n<div></div>`,
+    "src/app/shell.scss": `:host { display: block; }`,
+    "src/app/login.ts": `import { Component } from '@angular/core';\n@Component({ selector: 'app-login', template: '<app-icon></app-icon>', styleUrl: './login.css' })\nexport class Login {}\n`,
+    "src/app/login.css": `a{}`,
+    "src/app/icon.ts": `@Component({ selector: 'app-icon', template: '' })\nexport class Icon {}\n`,
+    "src/app/dup1.ts": `@Component({ selector: 'app-dup', template: '' })\nexport class Dup1 {}\n`,
+    "src/app/dup2.ts": `@Component({ selector: 'app-dup', template: '' })\nexport class Dup2 {}\n`,
+    "src/app/odd.ts": `@Component({ selector: '[appOdd], app-x y', template: '<app-shell></app-shell>' })\nexport class Odd {}\n`,
+  });
+  const { graph } = await indexRepo(root);
+  const e = (from: string, spec: string) => graph.edges.find((x) => x.from === `file:${from}` && x.specifier === spec);
+  assert.equal(e("src/app/shell.ts", "./shell.html")?.evidence, "resolved");
+  assert.equal(e("src/app/shell.ts", "./shell.html")?.kind, "references");
+  assert.equal(e("src/app/shell.ts", "./shell.scss")?.evidence, "resolved");
+  assert.equal(e("src/app/shell.ts", "./nope.scss")?.evidence, "unresolved");
+  assert.equal(e("src/app/login.ts", "./login.css")?.evidence, "resolved");
+  assert.equal(e("src/app/shell.html", "<app-login>")?.to, "file:src/app/login.ts");
+  assert.equal(e("src/app/shell.html", "<app-login>")?.evidence, "inferred");
+  assert.equal(e("src/app/login.ts", "<app-icon>")?.to, "file:src/app/icon.ts", "inline template");
+  assert.equal(e("src/app/shell.html", "<app-dup>"), undefined, "ambiguous selector is not linked");
+  assert.equal(e("src/app/shell.html", "<mat-icon>"), undefined, "unknown (library) tag is not linked");
+  assert.equal(e("src/app/odd.ts", "<app-shell>")?.to, "file:src/app/shell.ts");
+});
+
+test("tsconfig: paths (with extends and baseUrl) resolve, misses are unresolved, other bare imports stay packages", async () => {
+  const root = await fixture({
+    "tsconfig.base.json": `// comment allowed\n{ "compilerOptions": { "baseUrl": ".", "paths": { "@app/*": ["src/app/*"], "@env": ["src/env.ts"], "@gone/*": ["nowhere/*"] } } }`,
+    "tsconfig.json": `{ "extends": "./tsconfig.base.json" }`,
+    "src/app/core/svc.ts": `export const svc = 1;`,
+    "src/app/core/index.ts": `export const idx = 1;`,
+    "src/env.ts": `export const env = 1;`,
+    "src/lib/util.ts": `export const util = 1;`,
+    "src/main.ts": `import { svc } from '@app/core/svc';\nimport { idx } from '@app/core';\nimport { env } from '@env';\nimport { x } from '@gone/x';\nimport { util } from 'src/lib/util';\nimport { r } from 'rxjs';\n`,
+    "pkg/tsconfig.json": `{ "compilerOptions": { "paths": { "~/*": ["./src/*"] } } }`,
+    "pkg/src/a.ts": `export const a = 1;`,
+    "pkg/main.ts": `import { a } from '~/a';\n`,
+    "bad/tsconfig.json": `{not json`,
+  });
+  const { graph } = await indexRepo(root);
+  const e = (from: string, spec: string) => graph.edges.find((x) => x.from === `file:${from}` && x.specifier === spec);
+  assert.equal(e("src/main.ts", "@app/core/svc")?.to, "file:src/app/core/svc.ts");
+  assert.equal(e("src/main.ts", "@app/core/svc")?.evidence, "resolved");
+  assert.equal(e("src/main.ts", "@app/core")?.to, "file:src/app/core/index.ts", "directory alias resolves to index");
+  assert.equal(e("src/main.ts", "@env")?.evidence, "resolved");
+  assert.equal(e("src/main.ts", "@gone/x")?.evidence, "unresolved", "alias matched but no file");
+  assert.equal(e("src/main.ts", "src/lib/util")?.evidence, "resolved", "baseUrl lookup");
+  assert.equal(e("src/main.ts", "rxjs")?.evidence, "inferred");
+  assert.equal(e("pkg/main.ts", "~/a")?.to, "file:pkg/src/a.ts", "nearest tsconfig wins");
+  assert.equal(graph.aliases?.length, 2, "root (via extends) and pkg; invalid JSON is ignored");
+});
+
 test("bench: baseline and graph are compared on the same file cap, report lists both", async () => {
   const root = await fixture(angular);
   const { graph } = await indexRepo(root);
