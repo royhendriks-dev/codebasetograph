@@ -124,6 +124,7 @@ export function link(files: Record<string, FileFacts>, aliases: Alias[] = []): {
     }
   }
   linkSelectors(files, edges);
+  linkRoutes(files, edges);
   return { nodes: [...nodes.values()], edges };
 }
 
@@ -163,6 +164,41 @@ function linkSelectors(files: Record<string, FileFacts>, edges: GraphEdge[]): vo
     for (const el of f.elements ?? []) {
       const o = owners.get(el);
       if (o?.length === 1 && o[0] !== f.path) edges.push({ from: `file:${f.path}`, to: `file:${o[0]}`, kind: "references", evidence: "inferred", specifier: `<${el}>` });
+    }
+  }
+}
+
+const routeParts = (r: string) => r.split("/").filter(Boolean).map((p) => (p.startsWith("{") ? "{}" : p));
+
+/**
+ * Client to backend: a URL-like literal in a TS file and a JAX-RS route in a Java file point at each other when their
+ * path segments agree (`{x}` matches any one segment) up to the shorter of the two, over at least two segments. The
+ * shorter side is a prefix because a client often keeps only the base ("/api/auth") and appends the rest. Evidence is
+ * `inferred`: a string that looks like a route is not proof that it is called.
+ */
+function linkRoutes(files: Record<string, FileFacts>, edges: GraphEdge[]): void {
+  const backend = Object.values(files).filter((f) => f.routes?.length);
+  if (!backend.length) return;
+  const seen = new Set<string>();
+  for (const f of Object.values(files)) {
+    for (const url of f.urls ?? []) {
+      const u = routeParts(url);
+      // a `{param}` segment may swallow a literal one ('/api/auth' fits '/api/{game}/x'), so keep only the best exact fits
+      const hits: Array<{ path: string; exact: number }> = [];
+      for (const b of backend) {
+        let best = -1;
+        for (const r of b.routes!) {
+          const rp = routeParts(r), n = Math.min(u.length, rp.length);
+          if (n < 2 || !u.slice(0, n).every((seg, i) => seg === rp[i] || seg === "{}" || rp[i] === "{}")) continue;
+          best = Math.max(best, u.slice(0, n).filter((seg, i) => seg === rp[i]).length);
+        }
+        if (best >= 0) hits.push({ path: b.path, exact: best });
+      }
+      const top = Math.max(0, ...hits.map((h) => h.exact));
+      for (const h of hits) {
+        const key = `${f.path}>${h.path}`;
+        if (h.exact === top && !seen.has(key)) { seen.add(key); edges.push({ from: `file:${f.path}`, to: `file:${h.path}`, kind: "references", evidence: "inferred", specifier: url }); }
+      }
     }
   }
 }
