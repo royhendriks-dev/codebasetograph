@@ -176,7 +176,8 @@ function resolveAlias(alias: Alias | undefined, spec: string, known: Set<string>
 }
 
 /**
- * Angular: a custom element used in a template points at the component whose `selector` is exactly that tag.
+ * Angular: a custom element, attribute (`[appFoo]`) or pipe (`|money`) used in a template points at the component, directive
+ * or pipe that declares exactly that selector or pipe name.
  * Only unique selectors are linked, and the evidence is `inferred`: the template may use a tag from a library,
  * and whether the component is actually imported into the declaring module/component is not checked.
  */
@@ -186,7 +187,7 @@ function linkSelectors(files: Record<string, FileFacts>, edges: GraphEdge[]): vo
   for (const f of Object.values(files)) {
     for (const el of f.elements ?? []) {
       const o = owners.get(el);
-      if (o?.length === 1 && o[0] !== f.path) edges.push({ from: `file:${f.path}`, to: `file:${o[0]}`, kind: "references", evidence: "inferred", specifier: `<${el}>` });
+      if (o?.length === 1 && o[0] !== f.path) edges.push({ from: `file:${f.path}`, to: `file:${o[0]}`, kind: "references", evidence: "inferred", specifier: /^[[|]/.test(el) ? el : `<${el}>` });
     }
   }
 }
