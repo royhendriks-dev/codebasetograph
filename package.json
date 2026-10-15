@@ -1,0 +1,16 @@
+{
+  "name": "codebasetograph",
+  "version": "0.0.1",
+  "description": "Local-first, provider-independent code knowledge graph for coding agents",
+  "type": "module",
+  "private": true,
+  "bin": { "cbtg": "dist/cli.js" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test \"dist/test/*.test.js\"",
+    "cbtg": "node dist/cli.js"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": { "typescript": "^5.6.0" },
+  "devDependencies": { "@types/node": "^22.0.0" }
+}
