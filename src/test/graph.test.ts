@@ -160,6 +160,25 @@ test("cli: context --synonyms and bench --synonyms", async () => {
   assert.match((await run("bench", path.join(root, "tasks.json"))).stdout, /\| t \| graph context \| 1 \|.*\| 100% \|/);
 });
 
+test("tests are linked to their subject by naming convention (inferred), unless they import it", async () => {
+  const root = await fixture({
+    "src/foo.ts": `export const foo = 1;`, "src/foo.spec.ts": `describe("x", () => {});`,
+    "src/bar.ts": `export const bar = 1;`, "src/bar.test.ts": `import { bar } from "./bar"; bar;`,
+    "src/orphan.spec.ts": `describe("y", () => {});`,
+    "src/main/java/a/Svc.java": `package a; public class Svc {}`, "src/test/java/a/SvcTest.java": `package a; class SvcTest {}`,
+    "src/main/java/a/Dup.java": `package a; public class Dup {}`, "src/main/java/b/Dup.java": `package b; public class Dup {}`, "src/test/java/a/DupIT.java": `package a; class DupIT {}`,
+  });
+  const { graph } = await indexRepo(root);
+  const edge = (from: string, to: string) => graph.edges.filter((e) => e.from === `file:${from}` && e.to === `file:${to}`);
+  assert.equal(edge("src/foo.spec.ts", "src/foo.ts")[0]?.evidence, "inferred");
+  assert.equal(edge("src/bar.test.ts", "src/bar.ts").length, 1, "a real import is not duplicated");
+  assert.equal(edge("src/bar.test.ts", "src/bar.ts")[0].evidence, "resolved");
+  assert.equal(edge("src/test/java/a/SvcTest.java", "src/main/java/a/Svc.java")[0]?.evidence, "inferred");
+  assert.equal(graph.edges.some((e) => e.from === "file:src/orphan.spec.ts" && e.specifier === "test of"), false);
+  assert.equal(graph.edges.some((e) => e.from === "file:src/test/java/a/DupIT.java" && e.specifier === "test of"), false, "ambiguous subject: no guess");
+  assert.ok(dependents(graph, "src/foo.ts").some((e) => e.from === "file:src/foo.spec.ts"), "the test shows up as dependent");
+});
+
 test("graph-dir: the graph can live outside the repo, which then stays untouched", async () => {
   const root = await fixture({ "src/a.ts": `export const a = 1;`, "src/b.ts": `import { a } from "./a"; export const b = a;` });
   const out = await fs.mkdtemp(path.join(os.tmpdir(), "cbtg-out-"));
