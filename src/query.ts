@@ -101,6 +101,6 @@ export function context(g: Graph, task: string, budgetTokens = 800): { text: str
     used += cost; lines.push(line);
   }
   const unresolved = g.edges.filter((e) => e.evidence === "unresolved" && [...seenFiles].some((p) => e.from === fileId(p)));
-  if (unresolved.length) lines.push(`! ${unresolved.length} unresolved import(s) in these files; the graph may miss links (e.g. tsconfig path aliases).`);
+  if (unresolved.length) lines.push(`! ${unresolved.length} unresolved import(s) in these files; the graph may miss links (e.g. an alias that is not in any tsconfig).`);
   return { text: lines.join("\n") || "no matches", items, truncated };
 }
