@@ -15,7 +15,7 @@ export const GRAPH_FILE = "graph.json";
 export function languageOf(rel: string): "ts" | "java" | "config" | "asset" {
   if (rel.endsWith(".java")) return "java";
   if (/\.(html|scss|css)$/.test(rel)) return "asset";
-  return /\.(ya?ml|sql|conf|md)$/.test(rel) || /(^|\/)Dockerfile[^/]*$/.test(rel) ? "config" : "ts";
+  return /\.(ya?ml|sql|conf|properties|md)$/.test(rel) || /(^|\/)\.env[^/]*$/.test(rel) || /(^|\/)Dockerfile[^/]*$/.test(rel) ? "config" : "ts";
 }
 
 const CANDIDATE_EXTS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"];
