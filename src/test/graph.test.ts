@@ -273,3 +273,33 @@ test("bench: invalid task files are rejected with a readable error", async () =>
   const { renderReport } = await import("../bench.js");
   assert.match(renderReport([]), /0 task/);
 });
+
+test("explain/path: names resolve without guessing, paths follow resolved links only", async () => {
+  const root = await fixture({
+    "a/util.ts": `export function helper() {}\nexport const shared = 1;`,
+    "b/util.ts": `export const shared = 2;`,
+    "src/main.ts": `import { helper } from '../a/util';\nimport { z } from 'zod';`,
+    "src/other.ts": `import './main';`,
+    "src/island.ts": `import { z } from 'zod';`,
+  });
+  const { graph } = await indexRepo(root);
+  const { resolveTarget, explain, shortestPath } = await import("../query.js");
+  const ok = resolveTarget(graph, "helper");
+  assert.equal(ok.status, "ok");
+  const amb = resolveTarget(graph, "shared");
+  assert.equal(amb.status, "ambiguous");
+  assert.equal(amb.status === "ambiguous" && amb.candidates.length, 2);
+  assert.equal(resolveTarget(graph, "a/util.ts").status, "ok");
+  const none = resolveTarget(graph, "helpr");
+  assert.equal(none.status, "none");
+  const node = (input: string) => { const r = resolveTarget(graph, input); assert.equal(r.status, "ok"); return (r as Extract<typeof r, { status: "ok" }>).node; };
+  assert.equal(explain(graph, node("a/util.ts")).incoming.length, 1);
+  const x = explain(graph, node("src/main.ts"));
+  assert.deepEqual(x.symbols, []);
+  assert.equal(x.outgoing.length, 2);
+  const p = shortestPath(graph, "src/other.ts", "a/util.ts");
+  assert.deepEqual(p?.map((s) => s.path), ["src/other.ts", "src/main.ts", "a/util.ts"]);
+  assert.equal(p?.[1].direction, "imports");
+  assert.equal(shortestPath(graph, "src/island.ts", "a/util.ts"), undefined); // both only share an inferred package
+  assert.deepEqual(shortestPath(graph, "src/main.ts", "src/main.ts")?.length, 1);
+});

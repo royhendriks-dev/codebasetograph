@@ -21,6 +21,7 @@ cbtg index --root <project>      # re-run after changes; only changed files are 
 2. `cbtg find <name>`: locate a symbol or file.
 3. `cbtg deps <file>` / `cbtg dependents <file>`: what a file imports / who imports it (check this before changing an export).
 4. `cbtg related <file> --depth 2`: files within N import hops.
+5. `cbtg explain <name|path>`: location, symbols and links of one file or symbol. If the name is ambiguous it exits with code 3 and lists candidates (never guesses); code 4 means not found. `cbtg path <from> <to>`: shortest chain of `resolved` links; inferred and unresolved links are not followed, so no path does not prove independence.
 5. Read only the line ranges you need from the original files.
 
 ## Reading evidence

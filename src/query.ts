@@ -104,3 +104,72 @@ export function context(g: Graph, task: string, budgetTokens = 800): { text: str
   if (unresolved.length) lines.push(`! ${unresolved.length} unresolved import(s) in these files; the graph may miss links (e.g. an alias that is not in any tsconfig).`);
   return { text: lines.join("\n") || "no matches", items, truncated };
 }
+
+export type Resolved =
+  | { status: "ok"; node: GraphNode }
+  | { status: "ambiguous"; candidates: GraphNode[] }
+  | { status: "none"; suggestions: GraphNode[] };
+
+/**
+ * Resolves user input to one file or symbol without guessing: a repo path or `file:`/`sym:` id wins, then an exact name
+ * (case-insensitive). Several exact matches are reported as candidates instead of picking one.
+ */
+export function resolveTarget(g: Graph, input: string): Resolved {
+  const byId = g.nodes.find((n) => n.id === input || n.id === `file:${input}` || n.id === `sym:${input}`);
+  if (byId) return { status: "ok", node: byId };
+  const t = input.toLowerCase();
+  const exact = g.nodes.filter((n) => n.kind !== "package" && n.name.toLowerCase() === t);
+  if (exact.length === 1) return { status: "ok", node: exact[0] };
+  if (exact.length > 1) return { status: "ambiguous", candidates: exact.slice(0, 10) };
+  return { status: "none", suggestions: findSymbols(g, input, 5) };
+}
+
+const fileOf = (n: GraphNode) => n.path!;
+
+/** Everything the graph knows about one file or symbol: location, symbols, and incoming/outgoing links with evidence. */
+export function explain(g: Graph, node: GraphNode): { node: GraphNode; symbols: GraphNode[]; outgoing: GraphEdge[]; incoming: GraphEdge[] } {
+  const p = fileOf(node);
+  return {
+    node,
+    symbols: node.kind === "file" ? g.nodes.filter((n) => n.kind === "symbol" && n.path === p) : [],
+    outgoing: dependencies(g, p),
+    incoming: dependents(g, p),
+  };
+}
+
+export interface PathStep { path: string; via?: GraphEdge; direction?: "imports" | "imported by" }
+
+/**
+ * Shortest chain of `resolved` links between two files (either direction per hop). Inferred and unresolved links are
+ * ignored on purpose: a path through them would present a guess as a connection.
+ */
+export function shortestPath(g: Graph, from: string, to: string, maxHops = 8): PathStep[] | undefined {
+  if (from === to) return [{ path: from }];
+  const prev = new Map<string, PathStep & { from: string }>();
+  let frontier = [from];
+  const seen = new Set([from]);
+  for (let hop = 0; hop < maxHops && frontier.length; hop++) {
+    const next: string[] = [];
+    for (const p of frontier) {
+      for (const e of [...dependencies(g, p), ...dependents(g, p)]) {
+        if (e.evidence !== "resolved") continue;
+        const out = e.from === fileId(p);
+        const other = (out ? e.to : e.from).slice(5);
+        if (seen.has(other)) continue;
+        seen.add(other);
+        prev.set(other, { from: p, path: other, via: e, direction: out ? "imports" : "imported by" });
+        if (other === to) {
+          const steps: PathStep[] = [];
+          for (let cur: string | undefined = to; cur; cur = prev.get(cur)?.from) {
+            const s = prev.get(cur);
+            steps.unshift(s ? { path: s.path, via: s.via, direction: s.direction } : { path: cur });
+          }
+          return steps;
+        }
+        next.push(other);
+      }
+    }
+    frontier = next;
+  }
+  return undefined;
+}
