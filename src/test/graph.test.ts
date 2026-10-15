@@ -149,6 +149,7 @@ test("tests are linked to their subject by naming convention (inferred), unless 
   assert.equal(graph.edges.some((e) => e.from === "file:src/orphan.spec.ts" && e.specifier === "test of"), false);
   assert.equal(graph.edges.some((e) => e.from === "file:src/test/java/a/DupIT.java" && e.specifier === "test of"), false, "ambiguous subject: no guess");
   assert.ok(dependents(graph, "src/foo.ts").some((e) => e.from === "file:src/foo.spec.ts"), "the test shows up as dependent");
+});
 
 test("graph-dir: the graph can live outside the repo, which then stays untouched", async () => {
   const root = await fixture({ "src/a.ts": `export const a = 1;`, "src/b.ts": `import { a } from "./a"; export const b = a;` });
