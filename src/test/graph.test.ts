@@ -190,3 +190,57 @@ test("config: pathological nesting does not crash the indexer", async () => {
   assert.ok(graph.files["ok.yml"]);
   assert.equal(graph.files["deep.yml"].parseError, true);
 });
+
+test("angular: templateUrl/styleUrl resolve, template tags link to unique component selectors (inferred)", async () => {
+  const root = await fixture({
+    "src/app/shell.ts": `import { Component } from '@angular/core';\n@Component({ selector: 'app-shell', templateUrl: 'shell.html', styleUrls: ['./shell.scss', './nope.scss'] })\nexport class Shell {}\n`,
+    "src/app/shell.html": `<app-login></app-login>\n<app-dup/>\n<mat-icon></mat-icon>\n<div></div>`,
+    "src/app/shell.scss": `:host { display: block; }`,
+    "src/app/login.ts": `import { Component } from '@angular/core';\n@Component({ selector: 'app-login', template: '<app-icon></app-icon>', styleUrl: './login.css' })\nexport class Login {}\n`,
+    "src/app/login.css": `a{}`,
+    "src/app/icon.ts": `@Component({ selector: 'app-icon', template: '' })\nexport class Icon {}\n`,
+    "src/app/dup1.ts": `@Component({ selector: 'app-dup', template: '' })\nexport class Dup1 {}\n`,
+    "src/app/dup2.ts": `@Component({ selector: 'app-dup', template: '' })\nexport class Dup2 {}\n`,
+    "src/app/odd.ts": `@Component({ selector: '[appOdd], app-x y', template: '<app-shell></app-shell>' })\nexport class Odd {}\n`,
+  });
+  const { graph } = await indexRepo(root);
+  const e = (from: string, spec: string) => graph.edges.find((x) => x.from === `file:${from}` && x.specifier === spec);
+  assert.equal(e("src/app/shell.ts", "./shell.html")?.evidence, "resolved");
+  assert.equal(e("src/app/shell.ts", "./shell.html")?.kind, "references");
+  assert.equal(e("src/app/shell.ts", "./shell.scss")?.evidence, "resolved");
+  assert.equal(e("src/app/shell.ts", "./nope.scss")?.evidence, "unresolved");
+  assert.equal(e("src/app/login.ts", "./login.css")?.evidence, "resolved");
+  assert.equal(e("src/app/shell.html", "<app-login>")?.to, "file:src/app/login.ts");
+  assert.equal(e("src/app/shell.html", "<app-login>")?.evidence, "inferred");
+  assert.equal(e("src/app/login.ts", "<app-icon>")?.to, "file:src/app/icon.ts", "inline template");
+  assert.equal(e("src/app/shell.html", "<app-dup>"), undefined, "ambiguous selector is not linked");
+  assert.equal(e("src/app/shell.html", "<mat-icon>"), undefined, "unknown (library) tag is not linked");
+  assert.equal(e("src/app/odd.ts", "<app-shell>")?.to, "file:src/app/shell.ts");
+});
+
+test("tsconfig: paths (with extends and baseUrl) resolve, misses are unresolved, other bare imports stay packages", async () => {
+  const root = await fixture({
+    "tsconfig.base.json": `// comment allowed\n{ "compilerOptions": { "baseUrl": ".", "paths": { "@app/*": ["src/app/*"], "@env": ["src/env.ts"], "@gone/*": ["nowhere/*"] } } }`,
+    "tsconfig.json": `{ "extends": "./tsconfig.base.json" }`,
+    "src/app/core/svc.ts": `export const svc = 1;`,
+    "src/app/core/index.ts": `export const idx = 1;`,
+    "src/env.ts": `export const env = 1;`,
+    "src/lib/util.ts": `export const util = 1;`,
+    "src/main.ts": `import { svc } from '@app/core/svc';\nimport { idx } from '@app/core';\nimport { env } from '@env';\nimport { x } from '@gone/x';\nimport { util } from 'src/lib/util';\nimport { r } from 'rxjs';\n`,
+    "pkg/tsconfig.json": `{ "compilerOptions": { "paths": { "~/*": ["./src/*"] } } }`,
+    "pkg/src/a.ts": `export const a = 1;`,
+    "pkg/main.ts": `import { a } from '~/a';\n`,
+    "bad/tsconfig.json": `{not json`,
+  });
+  const { graph } = await indexRepo(root);
+  const e = (from: string, spec: string) => graph.edges.find((x) => x.from === `file:${from}` && x.specifier === spec);
+  assert.equal(e("src/main.ts", "@app/core/svc")?.to, "file:src/app/core/svc.ts");
+  assert.equal(e("src/main.ts", "@app/core/svc")?.evidence, "resolved");
+  assert.equal(e("src/main.ts", "@app/core")?.to, "file:src/app/core/index.ts", "directory alias resolves to index");
+  assert.equal(e("src/main.ts", "@env")?.evidence, "resolved");
+  assert.equal(e("src/main.ts", "@gone/x")?.evidence, "unresolved", "alias matched but no file");
+  assert.equal(e("src/main.ts", "src/lib/util")?.evidence, "resolved", "baseUrl lookup");
+  assert.equal(e("src/main.ts", "rxjs")?.evidence, "inferred");
+  assert.equal(e("pkg/main.ts", "~/a")?.to, "file:pkg/src/a.ts", "nearest tsconfig wins");
+  assert.equal(graph.aliases?.length, 2, "root (via extends) and pkg; invalid JSON is ignored");
+});

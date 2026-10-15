@@ -34,8 +34,11 @@ export interface FileFacts {
   hash: string;
   parseError: boolean;
   /** Language and parser version that produced these facts; a mismatch forces a re-parse of cached files. */
-  lang?: "ts" | "java" | "config";
+  lang?: "ts" | "java" | "config" | "asset";
   parser?: string;
+  /** Angular: simple element selector of a component declared here, and custom elements used in its (inline or html) template. */
+  selectors?: string[];
+  elements?: string[];
   /** Java only: declared package. */
   javaPackage?: string;
   symbols: Array<Omit<GraphNode, "id" | "kind" | "path"> & { name: string }>;
@@ -44,6 +47,8 @@ export interface FileFacts {
 
 export interface Graph {
   version: 1;
+  /** tsconfig baseUrl/paths found in the repo; kept so linking is reproducible from the graph file. */
+  aliases?: import("./tsconfig.js").Alias[];
   root: string;
   files: Record<string, FileFacts>;
   nodes: GraphNode[];

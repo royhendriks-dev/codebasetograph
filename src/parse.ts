@@ -1,11 +1,12 @@
 import ts from "typescript";
 import { createHash } from "node:crypto";
 import type { FileFacts } from "./model.js";
+import { customElements, elementSelector } from "./angular.js";
 
 const ANGULAR = new Set(["Component", "Directive", "Pipe", "Injectable", "NgModule"]);
 
 /** Parses source text with the TypeScript parser. Source is never executed. Malformed input yields partial facts. */
-export const TS_PARSER_VERSION = "ts-1";
+export const TS_PARSER_VERSION = "ts-2";
 
 export function parseFile(relPath: string, text: string): FileFacts {
   const hash = createHash("sha256").update(text).digest("hex");
@@ -23,6 +24,12 @@ export function parseFile(relPath: string, text: string): FileFacts {
   const addSymbol = (name: string, detail: string, n: ts.Node, exported: boolean) =>
     facts.symbols.push({ name, detail, lines: [lineOf(n), endLineOf(n)], exported });
 
+  /** Angular templateUrl/styleUrl(s) are relative to the component file even without a leading "./". */
+  function addUrl(url: string, key: string, n: ts.Node): void {
+    const spec = url.startsWith(".") ? url : "./" + url;
+    facts.imports.push({ specifier: spec, names: [key], line: lineOf(n), reexport: false, dynamic: false, ref: "path" });
+  }
+
   function angularRole(n: ts.ClassDeclaration): string | undefined {
     for (const d of ts.getDecorators(n) ?? []) {
       const call = d.expression;
@@ -31,8 +38,18 @@ export function parseFile(relPath: string, text: string): FileFacts {
         const arg = call.arguments[0];
         if (arg && ts.isObjectLiteralExpression(arg)) {
           for (const p of arg.properties) {
-            if (ts.isPropertyAssignment(p) && ts.isIdentifier(p.name) && p.name.text === "selector" && ts.isStringLiteralLike(p.initializer)) {
-              role += `[${p.initializer.text}]`;
+            if (!ts.isPropertyAssignment(p) || !ts.isIdentifier(p.name)) continue;
+            const key = p.name.text, v = p.initializer;
+            if (key === "selector" && ts.isStringLiteralLike(v)) {
+              role += `[${v.text}]`;
+              const sel = elementSelector(v.text);
+              if (sel) (facts.selectors ??= []).push(sel);
+            } else if ((key === "templateUrl" || key === "styleUrl") && ts.isStringLiteralLike(v)) {
+              addUrl(v.text, key, v);
+            } else if (key === "styleUrls" && ts.isArrayLiteralExpression(v)) {
+              for (const e of v.elements) if (ts.isStringLiteralLike(e)) addUrl(e.text, key, e);
+            } else if (key === "template" && ts.isStringLiteralLike(v)) {
+              facts.elements = [...new Set([...(facts.elements ?? []), ...customElements(v.text)])].sort((a, b) => a.localeCompare(b));
             }
           }
         }

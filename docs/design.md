@@ -61,10 +61,17 @@ Per-file facts are cached by SHA-256 of content. Changed files are re-parsed, de
 - Not covered: Helm templates and Kustomize overlays (templated YAML may be flagged `parseError`), `depends_on`/service-to-service links, linking an image to the compose service or k8s manifest that builds it, `package.json`/`pom.xml` dependency lists, `.properties`/`.env` keys (kept out on purpose: they often hold secrets), SQL beyond CREATE statements.
 - Security: YAML is parsed only; the parser is pinned to a version without the nested-collection stack-overflow advisory found by `npm audit` in 2.8.x, and a parse crash is caught and recorded as `parseError`.
 
+## tsconfig aliases and Angular links
+
+- `tsconfig*.json` / `jsconfig.json` are read as JSON (comments allowed, `extends` followed for relative paths, max 5 levels). `baseUrl` and `paths` become per-directory alias rules; the nearest directory wins. An import that matches a rule is `resolved` when the target file is indexed and `unresolved` when the rule matched but no file exists; a bare import that matches no rule stays an `inferred` package.
+- Angular: `templateUrl`, `styleUrl` and `styleUrls` become `references` edges to the `.html`/`.scss`/`.css` file (`resolved` or `unresolved`). `.html`, `.scss` and `.css` are indexed as plain file nodes; stylesheets are not parsed.
+- Custom elements used in an HTML or inline template are linked to the component whose `selector` is exactly that tag, but only when exactly one component has that selector, and always as `inferred`: the tag may come from a library, and whether the component is actually imported into the using component or module is not checked. Attribute and class selectors (`[appFoo]`) and selector lists are not matched.
+- Not covered: DI (`inject()`/constructor types), router config, structural directives, pipes, `exports`/`imports` maps in `package.json`, monorepo workspace package names.
+
 ## Known limits
 
 - TypeScript: file-level imports and top-level declarations only: no call graph, no member-level symbols, duplicate names in one file collapse to one node. Java: see above.
-- No tsconfig `paths`, package `exports`, monorepo workspaces, or Angular template/DI edges. Aliased imports show as `inferred` packages.
+- No package `exports`, monorepo workspace package names, or Angular DI/router edges. Imports that no tsconfig rule covers show as `inferred` packages.
 - `.gitignore` support is partial (no negation, no nested files).
 - Context ranking is plain name matching. It is a baseline to measure against, not a claim of quality.
 - Only tests in `src/test` were run, on small synthetic fixtures. **No larger real-world repository and no token benchmark has been run yet.**
@@ -72,7 +79,7 @@ Per-file facts are cached by SHA-256 of content. Changed files are re-parsed, de
 ## Next steps
 
 1. Phase 1: finish Graphify research with verified experiments.
-2. tsconfig path resolution and Angular template/DI edges.
+2. Angular DI and router edges.
 3. Benchmark harness: grep-based baseline vs graph context on the same tasks (files read, lines, tokens, missed relevant files).
 4. Real-repo index timing and incremental timing.
 5. Optional adapters (MCP, editor integrations) on top of the same JSON graph.
