@@ -3,6 +3,7 @@ import { indexRepo, loadGraph } from "./build.js";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { renderHtml } from "./view.js";
+import { loadTasks, renderReport, runBenchmark } from "./bench.js";
 import { context, dependencies, dependents, findSymbols, related } from "./query.js";
 
 const [cmd, ...rest] = process.argv.slice(2);
@@ -17,6 +18,7 @@ const usage = `cbtg <command> [--root dir]
   dependents <file>           who imports <file>
   related <file> [--depth n]  files within n import hops
   view [--out file]           write a self-contained HTML explorer (default .cbtg/graph.html)
+  bench <tasks.json> [--files n] [--budget tokens]   compare grep baseline with graph context on tasks with known relevant files
   context "<task>" [--budget tokens]   pointer list of task-relevant code`;
 
 async function main() {
@@ -37,6 +39,12 @@ async function main() {
     case "related": for (const r of related(g, arg, Number(flag("depth") ?? 1))) console.log(`${r.path} (distance ${r.distance})`); break;
     case "view": { const out = path.resolve(flag("out") ?? path.join(root, ".cbtg", "graph.html")); await fs.mkdir(path.dirname(out), { recursive: true }); await fs.writeFile(out, renderHtml(g)); console.log(`wrote ${out}`); break; }
     case "context": { const r = context(g, arg, Number(flag("budget") ?? 800)); console.log(r.text); if (r.truncated) console.log("(truncated by budget)"); break; }
+    case "bench": {
+      if (!arg) { console.error("usage: cbtg bench <tasks.json>"); process.exit(1); }
+      const opts = { maxFiles: Number(flag("files") ?? 5), budget: Number(flag("budget") ?? 800) };
+      console.log(renderReport(await runBenchmark(path.resolve(root), g, await loadTasks(path.resolve(arg)), opts), opts));
+      break;
+    }
     default: console.log(usage);
   }
 }

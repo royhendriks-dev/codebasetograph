@@ -1,0 +1,5 @@
+[
+  { "id": "ranking", "task": "make spec files rank lower in context results", "relevant": ["src/query.ts"] },
+  { "id": "ignore", "task": "skip generated and ignored directories during discovery", "relevant": ["src/discover.ts"] },
+  { "id": "cache", "task": "reuse cached facts when a file hash is unchanged", "relevant": ["src/build.ts"] }
+]

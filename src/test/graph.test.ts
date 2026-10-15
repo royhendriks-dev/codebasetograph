@@ -156,3 +156,32 @@ test("context ranking: source ranks above specs; stopwords ignored; exported sym
   const { isTestPath } = await import("../query.js");
   assert.ok(isTestPath("a/b.spec.ts") && isTestPath("tests/e2e/auth.ts") && !isTestPath("src/auth.ts"));
 });
+
+test("bench: baseline and graph are compared on the same file cap, report lists both", async () => {
+  const root = await fixture(angular);
+  const { graph } = await indexRepo(root);
+  const tasksFile = path.join(root, "tasks.json");
+  await fs.writeFile(tasksFile, JSON.stringify([{ id: "svc", task: "change the user service load", relevant: ["src/app/user.service.ts"] }]));
+  const { loadTasks, runBenchmark, renderReport } = await import("../bench.js");
+  const rows = await runBenchmark(root, graph, await loadTasks(tasksFile), { maxFiles: 2, budget: 400 });
+  assert.equal(rows.length, 1);
+  for (const side of [rows[0].baseline, rows[0].graph]) {
+    assert.ok(side.files.length <= 2);
+    assert.equal(side.recall, 1);
+    assert.ok(side.tokens > 0 && side.lines > 0);
+  }
+  const report = renderReport(rows, { maxFiles: 2, budget: 400 });
+  assert.match(report, /grep baseline/);
+  assert.match(report, /graph context/);
+  assert.match(report, /mean/);
+});
+
+test("bench: invalid task files are rejected with a readable error", async () => {
+  const root = await fixture({ "bad.json": `{}`, "bad2.json": `[{"task":"x","relevant":[]}]`, "ok.json": `[{"task":"x","relevant":["a.ts"]}]` });
+  const { loadTasks } = await import("../bench.js");
+  await assert.rejects(loadTasks(path.join(root, "bad.json")), /JSON array/);
+  await assert.rejects(loadTasks(path.join(root, "bad2.json")), /non-empty/);
+  assert.equal((await loadTasks(path.join(root, "ok.json")))[0].id, "t1");
+  const { renderReport } = await import("../bench.js");
+  assert.match(renderReport([]), /0 task/);
+});
