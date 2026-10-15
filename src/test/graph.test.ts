@@ -160,7 +160,7 @@ test("context ranking: source ranks above specs; stopwords ignored; exported sym
 test("config: workflow, compose, k8s, Dockerfile and SQL are indexed with honest evidence", async () => {
   const root = await fixture({
     ".github/workflows/ci.yml": `name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@abc123\n      - uses: ./.github/actions/setup\n  deploy:\n    uses: ./.github/workflows/missing.yml\n`,
-    "compose.yaml": `services:\n  backend:\n    build:\n      context: ./backend\n    depends_on: [db]\n  db:\n    image: postgres:16\n  web:\n    build: ./web\n  api:\n    image: ${API_IMAGE:-local-api:dev}\n`,
+    "compose.yaml": `services:\n  backend:\n    build:\n      context: ./backend\n    depends_on: [db]\n  db:\n    image: postgres:16\n  web:\n    build: ./web\n  api:\n    image: \${API_IMAGE:-local-api:dev}\n`,
     "backend/Dockerfile": `FROM maven:3.9 AS build\nRUN true\nFROM eclipse-temurin:21\nCOPY --from=build /a /b\nFROM build AS again\n`,
     "k8s/backend.yaml": `apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: backend\nspec:\n  template:\n    spec:\n      containers:\n        - name: app\n          image: ghcr.io/x/backend:1.2.3\n---\napiVersion: v1\nkind: Service\nmetadata:\n  name: backend\n`,
     "db/V1__init.sql": `CREATE TABLE IF NOT EXISTS page_view (id int);\ncreate unique index idx_pv on page_view(id);\n`,
