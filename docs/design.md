@@ -57,7 +57,7 @@ Per-file facts are cached by SHA-256 of content. Changed files are re-parsed, de
 ## Known limits
 
 - TypeScript: file-level imports and top-level declarations only: no call graph, no member-level symbols, duplicate names in one file collapse to one node. Java: see above.
-- No tsconfig `paths`, package `exports`, monorepo workspaces, or Angular template/DI edges. Aliased imports show as `inferred` packages.
+- tsconfig/jsconfig `paths` and `baseUrl` (with relative `extends`) resolve to indexed files as `resolved`; the nearest config wins and an unmatched alias stays an `inferred` package. Not supported: package `exports`, monorepo workspaces, package-based `extends`, Angular template/DI edges.
 - `.gitignore` support is partial (no negation, no nested files).
 - Context ranking is plain name matching. It is a baseline to measure against, not a claim of quality.
 - Only tests in `src/test` were run, on small synthetic fixtures. **No larger real-world repository and no token benchmark has been run yet.**
@@ -65,7 +65,7 @@ Per-file facts are cached by SHA-256 of content. Changed files are re-parsed, de
 ## Next steps
 
 1. Phase 1: finish Graphify research with verified experiments.
-2. tsconfig path resolution and Angular template/DI edges.
+2. Angular template/DI edges.
 3. Benchmark harness: grep-based baseline vs graph context on the same tasks (files read, lines, tokens, missed relevant files).
 4. Real-repo index timing and incremental timing.
 5. Optional adapters (MCP, editor integrations) on top of the same JSON graph.

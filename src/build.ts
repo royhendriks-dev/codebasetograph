@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { discover } from "./discover.js";
 import { parseFile, TS_PARSER_VERSION } from "./parse.js";
 import { parseJava, JAVA_PARSER_VERSION } from "./java.js";
+import { aliasCandidates, loadAliasConfigs, type AliasConfig } from "./tsconfig.js";
 import type { FileFacts, Graph, GraphEdge, GraphNode } from "./model.js";
 
 export const GRAPH_DIR = ".cbtg";
@@ -11,7 +12,10 @@ export const GRAPH_FILE = "graph.json";
 const CANDIDATE_EXTS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"];
 
 function resolveRelative(from: string, spec: string, known: Set<string>): string | undefined {
-  const base = path.posix.normalize(path.posix.join(path.posix.dirname(from), spec));
+  return resolveBase(path.posix.normalize(path.posix.join(path.posix.dirname(from), spec)), known);
+}
+
+function resolveBase(base: string, known: Set<string>): string | undefined {
   // ESM-style `./x.js` may point at `./x.ts`
   const stripped = base.replace(/\.[cm]?jsx?$/, "");
   const candidates = [base, ...CANDIDATE_EXTS.map((e) => base + e), ...CANDIDATE_EXTS.map((e) => stripped + e),
@@ -20,7 +24,7 @@ function resolveRelative(from: string, spec: string, known: Set<string>): string
 }
 
 /** Pure: turns per-file facts into nodes and edges. Always recomputed over all files (cheap, avoids stale cross-file data). */
-export function link(files: Record<string, FileFacts>): { nodes: GraphNode[]; edges: GraphEdge[] } {
+export function link(files: Record<string, FileFacts>, aliases: AliasConfig[] = []): { nodes: GraphNode[]; edges: GraphEdge[] } {
   const nodes = new Map<string, GraphNode>();
   const edges: GraphEdge[] = [];
   const known = new Set(Object.keys(files));
@@ -77,7 +81,13 @@ export function link(files: Record<string, FileFacts>): { nodes: GraphNode[]; ed
         edges.push({ from: fileId, to: target ? `file:${target}` : `file:${path.posix.join(path.posix.dirname(f.path), imp.specifier)}`,
           kind, evidence: target ? "resolved" : "unresolved", specifier: imp.specifier, line: imp.line });
       } else {
-        // Bare specifier: assumed external package. Could be a tsconfig path alias (not supported yet), so only "inferred".
+        // tsconfig `paths`/`baseUrl` first: a match on an indexed file is a deterministic resolution.
+        const aliased = aliasCandidates(aliases, f.path, imp.specifier).map((c) => resolveBase(c, known)).find((t) => t);
+        if (aliased) {
+          edges.push({ from: fileId, to: `file:${aliased}`, kind, evidence: "resolved", specifier: imp.specifier, line: imp.line });
+          continue;
+        }
+        // Otherwise assumed external package (or an alias we could not map), so only "inferred".
         const m = imp.specifier.match(/^(@[^/]+\/[^/]+|[^/]+)/);
         const name = m ? m[1] : imp.specifier;
         const id = `pkg:${name.replace(/^node:/, "")}`;
@@ -95,7 +105,7 @@ export interface IndexStats { parsed: number; reused: number; removed: number; f
 export async function indexRepo(root: string): Promise<{ graph: Graph; stats: IndexStats }> {
   root = path.resolve(root);
   const previous = await loadGraph(root);
-  const { files: found, skipped } = await discover(root);
+  const { files: found, configs, skipped } = await discover(root);
   const files: Record<string, FileFacts> = {};
   let parsed = 0, reused = 0;
   for (const rel of found) {
@@ -111,7 +121,7 @@ export async function indexRepo(root: string): Promise<{ graph: Graph; stats: In
     else { files[rel] = isJava ? await parseJava(rel, text) : parseFile(rel, text); parsed++; }
   }
   const removed = previous ? Object.keys(previous.files).filter((p) => !(p in files)).length : 0;
-  const graph: Graph = { version: 1, root: path.basename(root), files, ...link(files), skipped };
+  const graph: Graph = { version: 1, root: path.basename(root), files, ...link(files, await loadAliasConfigs(root, configs)), skipped };
   const dir = path.join(root, GRAPH_DIR);
   await fs.mkdir(dir, { recursive: true });
   const tmp = path.join(dir, GRAPH_FILE + ".tmp");

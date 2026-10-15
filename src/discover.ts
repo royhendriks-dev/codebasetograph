@@ -32,6 +32,8 @@ function compileIgnore(lines: string[]): (rel: string, isDir: boolean) => boolea
 
 export interface Discovered {
   files: string[];
+  /** tsconfig/jsconfig files (read as data for path aliases, never indexed as source). */
+  configs: string[];
   skipped: Array<{ path: string; reason: string }>;
 }
 
@@ -43,6 +45,7 @@ export async function discover(root: string): Promise<Discovered> {
   } catch { /* no .gitignore */ }
 
   const files: string[] = [];
+  const configs: string[] = [];
   const skipped: Discovered["skipped"] = [];
 
   async function walk(dir: string): Promise<void> {
@@ -55,6 +58,7 @@ export async function discover(root: string): Promise<Discovered> {
         if (DEFAULT_IGNORED_DIRS.has(e.name) || ignored(rel, true)) continue;
         await walk(rel);
       } else if (e.isFile()) {
+        if (/^[tj]sconfig(\.[\w-]+)?\.json$/.test(e.name) && !ignored(rel, false)) { configs.push(rel); continue; }
         if (!EXTS.has(path.extname(e.name)) || ignored(rel, false)) continue;
         if (/\.d\.[cm]?ts$/.test(e.name) || /\.min\.[cm]?js$/.test(e.name)) {
           skipped.push({ path: rel, reason: "generated/declaration file" });
@@ -70,5 +74,5 @@ export async function discover(root: string): Promise<Discovered> {
     }
   }
   await walk("");
-  return { files, skipped };
+  return { files, configs, skipped };
 }

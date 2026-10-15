@@ -156,3 +156,46 @@ test("context ranking: source ranks above specs; stopwords ignored; exported sym
   const { isTestPath } = await import("../query.js");
   assert.ok(isTestPath("a/b.spec.ts") && isTestPath("tests/e2e/auth.ts") && !isTestPath("src/auth.ts"));
 });
+
+test("tsconfig: paths, baseUrl and extends resolve aliases; unmapped bare imports stay inferred", async () => {
+  const root = await fixture({
+    "tsconfig.base.json": `{ // comments are allowed\n "compilerOptions": { "baseUrl": ".", "paths": { "@app/*": ["src/app/*"], "@env": ["src/env.ts"] } } }`,
+    "tsconfig.json": `{ "extends": "./tsconfig.base", "compilerOptions": { "strict": true } }`,
+    "src/env.ts": `export const env = 1;`,
+    "src/app/core/auth.ts": `export const auth = 1;`,
+    "src/app/core/index.ts": `export * from './auth';`,
+    "src/lib/util.ts": `export const u = 1;`,
+    "src/main.ts": `import { auth } from '@app/core/auth';\nimport { x } from '@app/core';\nimport { env } from '@env';\nimport { u } from 'src/lib/util';\nimport { r } from 'rxjs';\nimport { m } from '@app/missing';\n`,
+  });
+  const { graph } = await indexRepo(root);
+  const to = (spec: string) => graph.edges.find((e) => e.specifier === spec);
+  assert.deepEqual([to("@app/core/auth")?.to, to("@app/core/auth")?.evidence], ["file:src/app/core/auth.ts", "resolved"]);
+  assert.equal(to("@app/core")?.to, "file:src/app/core/index.ts");
+  assert.equal(to("@env")?.to, "file:src/env.ts");
+  assert.equal(to("src/lib/util")?.to, "file:src/lib/util.ts");
+  assert.equal(to("rxjs")?.evidence, "inferred");
+  assert.equal(to("@app/missing")?.evidence, "inferred");
+  const deps = dependents(graph, "src/app/core/auth.ts").map((e) => e.from);
+  assert.ok(deps.includes("file:src/main.ts"));
+});
+
+test("tsconfig: nearest config wins, invalid config is ignored, edit refreshes links", async () => {
+  const root = await fixture({
+    "tsconfig.json": `{ "compilerOptions": { "paths": { "@a/*": ["a/*"] } } }`,
+    "a/x.ts": `export const x = 1;`,
+    "pkg/tsconfig.json": `{ "compilerOptions": { "baseUrl": ".", "paths": { "@a/*": ["local/*"] } } }`,
+    "pkg/local/x.ts": `export const lx = 1;`,
+    "pkg/use.ts": `import { lx } from '@a/x';`,
+    "use.ts": `import { x } from '@a/x';`,
+    "bad/tsconfig.json": `{ not json`,
+    "bad/use.ts": `import { x } from '@a/x';`,
+  });
+  let g = (await indexRepo(root)).graph;
+  const edgeOf = (from: string) => g.edges.find((e) => e.from === `file:${from}` && e.specifier === "@a/x");
+  assert.equal(edgeOf("pkg/use.ts")?.to, "file:pkg/local/x.ts");
+  assert.equal(edgeOf("use.ts")?.to, "file:a/x.ts");
+  assert.equal(edgeOf("bad/use.ts")?.to, "file:a/x.ts"); // bad config ignored, root config applies
+  await fs.writeFile(path.join(root, "tsconfig.json"), `{}`);
+  g = (await indexRepo(root)).graph;
+  assert.equal(edgeOf("use.ts")?.evidence, "inferred"); // alias removed: edge downgraded, not stale
+});
