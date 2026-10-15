@@ -130,6 +130,9 @@ test("view --graph: drawn graph data is limited, deduplicated, self-contained an
   const script = html.split("<script>")[1].split("</script>")[0];
   assert.doesNotThrow(() => new vm.Script(script), "inline script must be valid JavaScript");
   assert.equal(graphData({ ...graph, edges: [] }).shown, 0);
+  const hub = all.nodes.find((n) => n.id === "src/hub.ts")!;
+  assert.deepEqual(hub.syms.map((x) => x[0]), ["h"], "clicking a file can list its symbols");
+  assert.ok(all.nodes.every((n) => n.syms.length <= 40));
 });
 
 test("dutch tasks: stop words are dropped and a glossary plus user synonyms map Dutch words to code words", async () => {
