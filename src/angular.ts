@@ -2,7 +2,7 @@
 export function customElements(html: string): string[] {
   const out = new Set<string>();
   for (const m of html.matchAll(/<([a-z][a-z0-9]*-[a-z0-9-]*)[\s/>]/g)) out.add(m[1]);
-  return [...out].sort();
+  return [...out].sort((a, b) => a.localeCompare(b));
 }
 
 /** A selector we can match by tag name: a single plain element selector like `app-login`. */

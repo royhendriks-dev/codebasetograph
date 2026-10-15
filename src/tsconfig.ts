@@ -32,7 +32,7 @@ async function readOptions(root: string, rel: string, depth = 0): Promise<Option
 /** One Alias per directory holding tsconfig*.json files that declare baseUrl or paths (their rules are unioned). Config files are only read as JSON. */
 export async function loadAliases(root: string, configs: string[]): Promise<Alias[]> {
   const byDir = new Map<string, Alias>();
-  for (const rel of [...configs].sort()) {
+  for (const rel of [...configs].sort((a, b) => a.localeCompare(b))) {
     const o = await readOptions(root, rel);
     if (o.baseDir === undefined && !o.paths) continue;
     const dir = path.posix.dirname(rel) === "." ? "" : path.posix.dirname(rel);

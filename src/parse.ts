@@ -49,7 +49,7 @@ export function parseFile(relPath: string, text: string): FileFacts {
             } else if (key === "styleUrls" && ts.isArrayLiteralExpression(v)) {
               for (const e of v.elements) if (ts.isStringLiteralLike(e)) addUrl(e.text, key, e);
             } else if (key === "template" && ts.isStringLiteralLike(v)) {
-              facts.elements = [...new Set([...(facts.elements ?? []), ...customElements(v.text)])].sort();
+              facts.elements = [...new Set([...(facts.elements ?? []), ...customElements(v.text)])].sort((a, b) => a.localeCompare(b));
             }
           }
         }
