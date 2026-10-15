@@ -82,6 +82,10 @@ export function link(files: Record<string, FileFacts>, aliases: Alias[] = []): {
         } else if (imp.ref === "doc") {
           // a link in a Markdown file: only existing indexed files become edges (images, URLs and missing targets are not noise)
           if (known.has(imp.specifier)) edges.push({ ...base, to: `file:${imp.specifier}`, evidence: "resolved" });
+        } else if (imp.ref === "service") {
+          // compose depends_on: service to service inside one file, so the edge runs between the two service symbols
+          const from = `sym:${f.path}#${imp.names[0]}`, to = `sym:${f.path}#${imp.specifier}`;
+          if (nodes.has(from) && nodes.has(to)) edges.push({ from, to, kind: "references", evidence: "resolved", specifier: "depends_on", line: imp.line });
         } else if (imp.ref === "object") {
           // Kind/name declared in exactly one other indexed file. Namespace is not checked, so only "inferred".
           const owners = objectOwners.get(imp.specifier)?.filter((p) => p !== f.path) ?? [];
@@ -148,6 +152,7 @@ export function link(files: Record<string, FileFacts>, aliases: Alias[] = []): {
   linkSelectors(files, edges);
   linkRoutes(files, edges);
   linkTests(files, edges);
+  linkServices(files, edges);
   return { nodes: [...nodes.values()], edges };
 }
 
@@ -188,6 +193,25 @@ function linkSelectors(files: Record<string, FileFacts>, edges: GraphEdge[]): vo
     for (const el of f.elements ?? []) {
       const o = owners.get(el);
       if (o?.length === 1 && o[0] !== f.path) edges.push({ from: `file:${f.path}`, to: `file:${o[0]}`, kind: "references", evidence: "inferred", specifier: /^[[|]/.test(el) ? el : `<${el}>` });
+    }
+  }
+}
+
+/**
+ * Kubernetes: a Service points at the workloads whose pod template labels contain all of its `selector` labels. Matching
+ * ignores namespaces and other files that merely reuse the same label, so the evidence is `inferred`.
+ */
+function linkServices(files: Record<string, FileFacts>, edges: GraphEdge[]): void {
+  const workloads = Object.values(files).filter((f) => f.k8sPodLabels?.length);
+  const selects = (sel: Record<string, string>, w: FileFacts) => w.k8sPodLabels!.some((l) => Object.entries(sel).every(([k, v]) => l[k] === v));
+  const label = (sel: Record<string, string>) => Object.entries(sel).map(([k, v]) => `${k}=${v}`).join(",");
+  for (const f of Object.values(files)) {
+    const seen = new Set<string>();
+    for (const sel of f.k8sSelectors ?? []) {
+      for (const w of workloads.filter((x) => x.path !== f.path && !seen.has(x.path) && selects(sel, x))) {
+        seen.add(w.path);
+        edges.push({ from: `file:${f.path}`, to: `file:${w.path}`, kind: "references", evidence: "inferred", specifier: `selector ${label(sel)}` });
+      }
     }
   }
 }
