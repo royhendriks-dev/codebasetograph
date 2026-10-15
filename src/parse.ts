@@ -31,33 +31,32 @@ export function parseFile(relPath: string, text: string): FileFacts {
     facts.imports.push({ specifier: spec, names: [key], line: lineOf(n), reexport: false, dynamic: false, ref: "path" });
   }
 
+  /** One property of an Angular decorator argument: selector, pipe name, template/style files or inline template. Returns the role suffix. */
+  function decoratorProperty(role: string, key: string, v: ts.Expression): string {
+    if (key === "selector" && ts.isStringLiteralLike(v)) {
+      const sel = elementSelector(v.text) ?? attributeSelector(v.text);
+      if (sel) (facts.selectors ??= []).push(sel);
+      return `[${v.text}]`;
+    }
+    if (key === "name" && role === "pipe" && ts.isStringLiteralLike(v)) (facts.selectors ??= []).push(`|${v.text}`);
+    else if ((key === "templateUrl" || key === "styleUrl") && ts.isStringLiteralLike(v)) addUrl(v.text, key, v);
+    else if (key === "styleUrls" && ts.isArrayLiteralExpression(v)) v.elements.filter(ts.isStringLiteralLike).forEach((e) => addUrl(e.text, key, e));
+    else if (key === "template" && ts.isStringLiteralLike(v)) facts.elements = [...new Set([...(facts.elements ?? []), ...customElements(v.text)])].sort((a, b) => a.localeCompare(b));
+    return "";
+  }
+
   function angularRole(n: ts.ClassDeclaration): string | undefined {
     for (const d of ts.getDecorators(n) ?? []) {
       const call = d.expression;
-      if (ts.isCallExpression(call) && ts.isIdentifier(call.expression) && ANGULAR.has(call.expression.text)) {
-        let role = call.expression.text.toLowerCase();
-        const arg = call.arguments[0];
-        if (arg && ts.isObjectLiteralExpression(arg)) {
-          for (const p of arg.properties) {
-            if (!ts.isPropertyAssignment(p) || !ts.isIdentifier(p.name)) continue;
-            const key = p.name.text, v = p.initializer;
-            if (key === "selector" && ts.isStringLiteralLike(v)) {
-              role += `[${v.text}]`;
-              const sel = elementSelector(v.text) ?? attributeSelector(v.text);
-              if (sel) (facts.selectors ??= []).push(sel);
-            } else if (key === "name" && role === "pipe" && ts.isStringLiteralLike(v)) {
-              (facts.selectors ??= []).push(`|${v.text}`);
-            } else if ((key === "templateUrl" || key === "styleUrl") && ts.isStringLiteralLike(v)) {
-              addUrl(v.text, key, v);
-            } else if (key === "styleUrls" && ts.isArrayLiteralExpression(v)) {
-              for (const e of v.elements) if (ts.isStringLiteralLike(e)) addUrl(e.text, key, e);
-            } else if (key === "template" && ts.isStringLiteralLike(v)) {
-              facts.elements = [...new Set([...(facts.elements ?? []), ...customElements(v.text)])].sort((a, b) => a.localeCompare(b));
-            }
-          }
-        }
-        return role;
+      if (!ts.isCallExpression(call) || !ts.isIdentifier(call.expression) || !ANGULAR.has(call.expression.text)) continue;
+      const base = call.expression.text.toLowerCase();
+      let role = base;
+      const arg = call.arguments[0];
+      const props = arg && ts.isObjectLiteralExpression(arg) ? arg.properties : [];
+      for (const p of props) {
+        if (ts.isPropertyAssignment(p) && ts.isIdentifier(p.name)) role += decoratorProperty(base, p.name.text, p.initializer);
       }
+      return role;
     }
     return undefined;
   }
