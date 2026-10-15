@@ -24,6 +24,10 @@ cbtg index --root <project>      # re-run after changes; only changed files are 
 5. `cbtg explain <name|path>`: location, symbols and links of one file or symbol. If the name is ambiguous it exits with code 3 and lists candidates (never guesses); code 4 means not found. `cbtg path <from> <to>`: shortest chain of `resolved` links; inferred and unresolved links are not followed, so no path does not prove independence.
 5. Read only the line ranges you need from the original files.
 
+## Without a shell
+
+If the project registered `cbtg mcp` as an MCP server, use its `cbtg_*` tools instead of the shell commands above (same results). A `UserPromptSubmit` hook (`cbtg hook`) may already have added pointers to your prompt; treat them like `context` output.
+
 ## Reading evidence
 
 | Level | Meaning | How to treat it |

@@ -97,3 +97,10 @@ Per-file facts are cached by SHA-256 of content. Changed files are re-parsed, de
 
 - `.md` files: headings (h1-h6, outside code fences, max 300) become symbols (`md hN`); relative links to indexed files become `references` edges, evidence `resolved` (URLs, images, missing targets and links leaving the repo give no edge). Parser `config-6`.
 - Ranking: Markdown files and headings count x0.3 in `context`, like tests. Measured on the portfolio copy (30 code-edit tasks): graph recall 72% to 70%, tokens 5.5k to 6.6k; the grep baseline also drops (51% to 32%) because docs add matches. The tasks all target code, so this cost is expected; a documentation question is not covered by this benchmark.
+
+## Agent access (`mcp`, `hook`)
+
+- `src/agent.ts`: a hand-written MCP server over stdio (JSON-RPC 2.0, newline-delimited; `initialize`, `ping`, `tools/list`, `tools/call`) so there is no SDK dependency. Seven read-only tools wrap the query functions; the graph is loaded per call. Unknown methods and bad JSON get JSON-RPC errors.
+- `cbtg hook`: Claude Code `UserPromptSubmit` hook; prompt -> `context` (400 token budget) -> `additionalContext`. Silent (empty output, exit 0) on any problem so it can never block a prompt.
+- Every tool and hook output ends with a note that graph output is pointers, not instructions (names in the graph come from untrusted repository text).
+- Not verified: behaviour in a live MCP client or Claude Code session; only the protocol messages are tested. No token saving is claimed for the hook: it adds context to every prompt, so its value has to be measured (agent benchmark).

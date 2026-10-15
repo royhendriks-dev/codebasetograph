@@ -4,6 +4,8 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { renderHtml } from "./view.js";
 import { renderGraphHtml, DEFAULT_MAX_NODES } from "./viewGraph.js";
+import { handleLine, hookOutput } from "./agent.js";
+import { createInterface } from "node:readline";
 import { loadSynonyms } from "./words.js";
 import { loadTasks, renderReport, runBenchmark } from "./bench.js";
 import { context, dependencies, dependents, explain, findSymbols, related, resolveTarget, shortestPath } from "./query.js";
@@ -25,12 +27,28 @@ const usage = `cbtg <command> [--root dir] [--graph-dir dir]   (--graph-dir keep
   view [--out file]           write a self-contained HTML explorer (default .cbtg/graph.html)
   view --graph [--max-nodes n] [--out file]   drawn file graph (default .cbtg/graph-map.html, 400 nodes)
   bench <tasks.json> [--files n] [--budget tokens] [--synonyms file.json]   compare grep baseline with graph context on tasks with known relevant files
+  mcp                         MCP server over stdio (tools: cbtg_context, cbtg_find, cbtg_deps, cbtg_dependents, cbtg_related, cbtg_explain, cbtg_path)
+  hook                        Claude Code UserPromptSubmit hook: reads the hook JSON on stdin, prints task context for the prompt (nothing if there is no graph)
   context "<task>" [--budget tokens] [--synonyms file.json]   pointer list of task-relevant code (Dutch words are mapped to English; the optional file adds your own, {"inloggen":["login"]})`;
 
 async function main() {
   if (cmd === "index") {
     const { stats, graph } = await indexRepo(root, graphDir);
     console.log(`indexed ${stats.files} files (parsed ${stats.parsed}, reused ${stats.reused}, removed ${stats.removed}); ${graph.nodes.length} nodes, ${graph.edges.length} edges, ${graph.skipped.length} skipped`);
+    return;
+  }
+  if (cmd === "mcp") {
+    for await (const line of createInterface({ input: process.stdin })) {
+      const out = line.trim() ? await handleLine(line, root, graphDir) : undefined;
+      if (out) process.stdout.write(out + "\n");
+    }
+    return;
+  }
+  if (cmd === "hook") {
+    const chunks: Buffer[] = [];
+    for await (const c of process.stdin) chunks.push(c as Buffer);
+    const out = await hookOutput(Buffer.concat(chunks).toString("utf8"), root, graphDir).catch(() => "");
+    if (out) console.log(out);
     return;
   }
   const g = await loadGraph(root, graphDir);
