@@ -17,10 +17,10 @@ jobs:
     name: Tests en coverage (>= 80%)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0 # SonarCloud heeft de volledige historie nodig
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -32,7 +32,7 @@ jobs:
       - name: SonarCloud-scan (quality gate)
         # Secrets zijn niet beschikbaar voor PR's vanuit forks; die slaan de scan over.
         if: ${{ github.event.pull_request.head.repo.full_name == github.repository || github.event_name == 'push' }}
-        uses: SonarSource/sonarqube-scan-action@v5
+        uses: SonarSource/sonarqube-scan-action@2f77a1ec69fb1d595b06f35ab27e97605bdef703 # v5.3.2
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
