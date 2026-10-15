@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { LineCounter, type Document, isMap, isScalar, isSeq, parseAllDocuments, type Node as YNode } from "yaml";
 import type { FileFacts } from "./model.js";
 
-export const CONFIG_PARSER_VERSION = "config-4";
+export const CONFIG_PARSER_VERSION = "config-5";
 
 type Symbols = FileFacts["symbols"];
 type Imports = FileFacts["imports"];
@@ -68,6 +68,17 @@ function parseNginx(text: string, symbols: Symbols): void {
       if (!seen.has(name)) { seen.add(name); symbols.push({ name, detail: "nginx", lines: [i + 1, i + 1] }); }
       break;
     }
+  });
+}
+
+/** `.properties` and `.env.example`: key names only. Values are never read into the graph (they may be secrets). */
+function parseKeys(text: string, symbols: Symbols): void {
+  const seen = new Set<string>();
+  text.split(/\r?\n/).forEach((raw, i) => {
+    const m = /^\s*(?:export\s+)?([\w.-]{1,200})\s*[=:]/.exec(raw);
+    if (!m || /^\s*[#!]/.test(raw) || seen.has(m[1]) || seen.size >= 500) return;
+    seen.add(m[1]);
+    symbols.push({ name: m[1], detail: "config key", lines: [i + 1, i + 1] });
   });
 }
 
@@ -198,6 +209,7 @@ export function parseConfig(relPath: string, text: string): FileFacts {
     const base = path.posix.basename(relPath);
     if (/^Dockerfile/.test(base)) parseDockerfile(text, facts.symbols, facts.imports);
     else if (base.endsWith(".conf")) parseNginx(text, facts.symbols);
+    else if (base.endsWith(".properties") || /^\.env/.test(base)) parseKeys(text, facts.symbols);
     else if (base.endsWith(".sql")) parseSql(text, facts.symbols);
     else facts.parseError = parseYaml(relPath, text, facts.symbols, facts.imports);
   } catch {

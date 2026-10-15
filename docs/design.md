@@ -63,7 +63,7 @@ Per-file facts are cached by SHA-256 of content. Changed files are re-parsed, de
 - Client to backend: TS files keep URL-like string literals (`'/api/auth'`, `` `/api/${game}/highscores` `` as `/api/{}/highscores`; test files skipped), Java files keep full JAX-RS routes (class `@Path` + method `@Path`). A TS file links to the Java file whose route agrees segment by segment up to the shorter of the two (at least two segments, `{x}` matches one segment, best exact fit wins). `references`, `inferred`: a string that looks like a route is not proof it is called. Only JAX-RS; Spring/Express/Nest routes are not read.
 - Tests: `foo.spec.ts`/`foo.test.ts` link to `foo.ts` next to it, `FooTest.java`/`FooTests.java`/`FooIT.java` to the unique `Foo.java` (`references`, `inferred`, specifier `test of`; skipped when the test already imports its subject or the name is ambiguous). A convention, not proof.
 - Kustomize: `resources`/`bases`/`components`/`patches` are `references` to local files (a directory points at its `kustomization.yaml`; remote URLs are skipped). Kubernetes `secretKeyRef`/`configMapRef`/`volumes`/`serviceAccountName` link to the file declaring that `Kind/name`: `inferred` when exactly one other file declares it (namespace is not checked), `unresolved` when none does (e.g. created outside the repo), no edge when ambiguous. Interpolated images: `${VAR:-default}` uses the default, anything else is skipped; a compose service with `build` has no image edge.
-- Not covered: Helm templates and Kustomize generators/transformers (templated YAML may be flagged `parseError`), `depends_on`/service-to-service links, linking an image to the compose service or k8s manifest that builds it, `package.json`/`pom.xml` dependency lists, `.properties`/`.env` keys (kept out on purpose: they often hold secrets; on the portfolio benchmark this is why a task about backend response headers cannot find `application.properties`), SQL beyond CREATE statements.
+- Not covered: Helm templates and Kustomize generators/transformers (templated YAML may be flagged `parseError`), `depends_on`/service-to-service links, linking an image to the compose service or k8s manifest that builds it, `package.json`/`pom.xml` dependency lists, SQL beyond CREATE statements.
 - Security: YAML is parsed only; the parser is pinned to a version without the nested-collection stack-overflow advisory found by `npm audit` in 2.8.x, and a parse crash is caught and recorded as `parseError`.
 
 ## tsconfig aliases and Angular links
@@ -88,3 +88,7 @@ Per-file facts are cached by SHA-256 of content. Changed files are re-parsed, de
 3. Benchmark harness: grep-based baseline vs graph context on the same tasks (files read, lines, tokens, missed relevant files).
 4. Real-repo index timing and incremental timing.
 5. Optional adapters (MCP, editor integrations) on top of the same JSON graph.
+
+## Config keys (`.properties`, `.env.example`)
+
+- Only key names become symbols (`config key`); values are never read into the graph because they may be secrets. A real `.env` is never indexed, only `.env.example`/`.sample`/`.template`. Max 500 keys per file, parser `config-5`. Quoted keys with spaces are not recognised.
