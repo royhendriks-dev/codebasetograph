@@ -2,6 +2,9 @@ import type { Graph, GraphEdge, GraphNode } from "./model.js";
 
 const fileId = (p: string) => `file:${p}`;
 
+/** Edge kinds that link two files: code imports, Java supertypes, config/CI/Angular references. `declares` is file-to-symbol and not a link. */
+const LINK_KINDS = new Set<GraphEdge["kind"]>(["imports", "reexports", "extends", "references"]);
+
 /** Case-insensitive substring search over symbol and file names. Exact matches rank first. */
 export function findSymbols(g: Graph, term: string, limit = 20): GraphNode[] {
   const t = term.toLowerCase();
@@ -12,11 +15,11 @@ export function findSymbols(g: Graph, term: string, limit = 20): GraphNode[] {
 }
 
 export function dependencies(g: Graph, path: string): GraphEdge[] {
-  return g.edges.filter((e) => e.from === fileId(path) && (e.kind === "imports" || e.kind === "reexports"));
+  return g.edges.filter((e) => e.from === fileId(path) && LINK_KINDS.has(e.kind));
 }
 
 export function dependents(g: Graph, path: string): GraphEdge[] {
-  return g.edges.filter((e) => e.to === fileId(path) && (e.kind === "imports" || e.kind === "reexports"));
+  return g.edges.filter((e) => e.to === fileId(path) && LINK_KINDS.has(e.kind));
 }
 
 /** Bounded breadth-first walk over resolved import edges, in both directions. */
