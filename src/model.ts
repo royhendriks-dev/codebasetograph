@@ -39,6 +39,8 @@ export interface FileFacts {
   /** Angular: simple element selector of a component declared here, and custom elements used in its (inline or html) template. */
   selectors?: string[];
   elements?: string[];
+  /** Java only: simple names of types used in this file (declared types excluded), for same-package links without an import. */
+  javaTypes?: string[];
   /** TS/JS: URL-like string literals (start with "/", template parts as `{}`), used to link a client to the backend route it calls. */
   urls?: string[];
   /** Java only: full JAX-RS routes (class `@Path` + method `@Path`), path parameters as `{name}`. */

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { Parser, Language, type Node } from "web-tree-sitter";
 import type { FileFacts } from "./model.js";
 
-export const JAVA_PARSER_VERSION = "java-2";
+export const JAVA_PARSER_VERSION = "java-3";
 const require = createRequire(import.meta.url);
 
 let parserPromise: Promise<Parser> | undefined;
@@ -94,5 +94,9 @@ export async function parseJava(relPath: string, text: string): Promise<FileFact
       }
     }
   }
+  // type names used anywhere in the file; same-package classes need no import, so this is the only trace of the use
+  const declared = new Set(facts.symbols.filter((x) => !x.name.includes(".")).map((x) => x.name));
+  const used = new Set(root.descendantsOfType("type_identifier").map((t) => t?.text).filter((t): t is string => !!t && !declared.has(t)));
+  if (used.size) facts.javaTypes = [...used].sort((a, b) => a.localeCompare(b)).slice(0, 300);
   return facts;
 }
