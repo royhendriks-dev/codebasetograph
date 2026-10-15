@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 import { indexRepo, loadGraph } from "./build.js";
+import { promises as fs } from "node:fs";
+import * as path from "node:path";
+import { renderHtml } from "./view.js";
 import { context, dependencies, dependents, findSymbols, related } from "./query.js";
 
 const [cmd, ...rest] = process.argv.slice(2);
@@ -13,6 +16,7 @@ const usage = `cbtg <command> [--root dir]
   deps <file>                 what <file> imports
   dependents <file>           who imports <file>
   related <file> [--depth n]  files within n import hops
+  view [--out file]           write a self-contained HTML explorer (default .cbtg/graph.html)
   context "<task>" [--budget tokens]   pointer list of task-relevant code`;
 
 async function main() {
@@ -31,6 +35,7 @@ async function main() {
     case "deps": for (const e of dependencies(g, arg)) console.log(fmt(e, "to")); break;
     case "dependents": for (const e of dependents(g, arg)) console.log(fmt(e, "from")); break;
     case "related": for (const r of related(g, arg, Number(flag("depth") ?? 1))) console.log(`${r.path} (distance ${r.distance})`); break;
+    case "view": { const out = path.resolve(flag("out") ?? path.join(root, ".cbtg", "graph.html")); await fs.mkdir(path.dirname(out), { recursive: true }); await fs.writeFile(out, renderHtml(g)); console.log(`wrote ${out}`); break; }
     case "context": { const r = context(g, arg, Number(flag("budget") ?? 800)); console.log(r.text); if (r.truncated) console.log("(truncated by budget)"); break; }
     default: console.log(usage);
   }

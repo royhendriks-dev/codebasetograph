@@ -30,6 +30,7 @@ discover -> parse (per file) -> link (all files) -> graph.json -> query -> CLI /
 | `parse.ts` | TypeScript compiler API (parse only, nothing executed): imports, re-exports, `require`, dynamic `import('literal')`, top-level declarations, Angular decorator roles and selectors |
 | `build.ts` | Per-file cache by content hash, linking, atomic write of `.cbtg/graph.json` |
 | `query.ts` | find, deps, dependents, bounded related walk, budgeted task context |
+| `view.ts` | Self-contained HTML explorer generated from the graph: search, symbols per file, imports / imported-by with evidence badges. Repo-derived text is set via `textContent` (untrusted input). Not a graph drawing on purpose |
 | `cli.ts` | `cbtg` commands |
 
 Language choice: TypeScript/Node, because the TS compiler API is the most accurate parser for TS/Angular and matches the primary stack. Python+tree-sitter was not evaluated yet; revisit when more languages are needed.
