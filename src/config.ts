@@ -49,17 +49,25 @@ function parseSql(text: string, symbols: Symbols): void {
   }
 }
 
+const NGINX_RULES: Array<[RegExp, string]> = [
+  [/^add_header\s+([\w-]+)/, "header"],
+  [/^location\s+(?:[=~*^]+\s+)?(\S+)/, "location"],
+  [/^upstream\s+([^\s;{]+)/, "upstream"],
+  [/^server_name\s+([^\s;]+)/, "server_name"],
+];
+
 /** nginx `.conf`: server/upstream/location blocks and the headers they set, by line regex. Heuristic, not an nginx parser. */
 function parseNginx(text: string, symbols: Symbols): void {
   const seen = new Set<string>();
   text.split(/\r?\n/).forEach((raw, i) => {
     const line = raw.replace(/#.*$/, "").trim();
-    const m = line.match(/^(add_header\s+([\w-]+)|location\s+(?:[=~*^]+\s+)?(\S+)|upstream\s+([^\s;{]+)|server_name\s+([^\s;]+))/);
-    if (!m) return;
-    const name = m[2] ? `header:${m[2]}` : m[3] ? `location:${m[3]}` : m[4] ? `upstream:${m[4]}` : `server_name:${m[5]}`;
-    if (seen.has(name)) return;
-    seen.add(name);
-    symbols.push({ name, detail: "nginx", lines: [i + 1, i + 1] });
+    for (const [re, label] of NGINX_RULES) {
+      const m = re.exec(line);
+      if (!m) continue;
+      const name = `${label}:${m[1]}`;
+      if (!seen.has(name)) { seen.add(name); symbols.push({ name, detail: "nginx", lines: [i + 1, i + 1] }); }
+      break;
+    }
   });
 }
 
