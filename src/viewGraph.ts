@@ -9,17 +9,15 @@ export function graphData(g: Graph, max = DEFAULT_MAX_NODES) {
   for (const e of links) for (const id of [e.from, e.to]) degree.set(id, (degree.get(id) ?? 0) + 1);
   const connected = [...degree.keys()].sort((a, b) => degree.get(b)! - degree.get(a)! || a.localeCompare(b));
   const keep = new Set(connected.slice(0, Math.max(1, max)));
-  const seen = new Set<string>();
-  const edges = links.filter((e) => keep.has(e.from) && keep.has(e.to)).filter((e) => {
-    const key = `${e.from}>${e.to}>${e.evidence}`;
-    return seen.has(key) ? false : (seen.add(key), true);
-  });
+  const unique = new Map<string, (typeof links)[number]>();
+  for (const e of links) if (keep.has(e.from) && keep.has(e.to)) unique.set(`${e.from}>${e.to}>${e.evidence}`, e);
+  const edges = [...unique.values()];
   return {
     root: g.root,
     total: Object.keys(g.files).length,
     shown: keep.size,
     connected: connected.length,
-    nodes: [...keep].sort().map((id) => ({ id: id.slice(5), degree: degree.get(id)!, missing: !g.files[id.slice(5)] })),
+    nodes: [...keep].sort((a, b) => a.localeCompare(b)).map((id) => ({ id: id.slice(5), degree: degree.get(id)!, missing: !g.files[id.slice(5)] })),
     edges: edges.map((e) => ({ from: e.from.slice(5), to: e.to.slice(5), kind: e.kind, evidence: e.evidence })),
   };
 }

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import * as vm from "node:vm";
 import { indexRepo, loadGraph } from "../build.js";
 import { parseFile } from "../parse.js";
 import { context, dependents, findSymbols } from "../query.js";
@@ -119,13 +120,13 @@ test("view --graph: drawn graph data is limited, deduplicated, self-contained an
   const small = graphData(graph, 2);
   assert.equal(small.shown, 2);
   assert.ok(small.shown < small.connected, "truncation is reported");
-  assert.equal(small.nodes[0].id !== undefined && small.nodes.some((n) => n.id === "src/hub.ts"), true, "most connected file is kept");
+  assert.ok(small.nodes.some((n) => n.id === "src/hub.ts"), "most connected file is kept");
   const html = renderGraphHtml(graph);
   assert.ok(!html.includes("</script><img"));
   assert.doesNotMatch(html, /https?:\/\//);
   assert.doesNotMatch(html, /innerHTML/);
   const script = html.split("<script>")[1].split("</script>")[0];
-  assert.doesNotThrow(() => new Function(script), "inline script must be valid JavaScript");
+  assert.doesNotThrow(() => new vm.Script(script), "inline script must be valid JavaScript");
   assert.equal(graphData({ ...graph, edges: [] }).shown, 0);
 });
 
