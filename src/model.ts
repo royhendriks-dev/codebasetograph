@@ -51,7 +51,7 @@ export interface FileFacts {
   /** Java only: declared package. */
   javaPackage?: string;
   symbols: Array<Omit<GraphNode, "id" | "kind" | "path"> & { name: string }>;
-  imports: Array<{ specifier: string; names: string[]; line: number; reexport: boolean; dynamic: boolean; wildcard?: boolean; ref?: "path" | "image" | "action" | "object" | "doc" | "service" }>;
+  imports: Array<{ specifier: string; names: string[]; line: number; reexport: boolean; dynamic: boolean; wildcard?: boolean; ref?: "path" | "image" | "action" | "object" | "doc" | "npm" | "maven" | "service" }>;
 }
 
 export interface Graph {

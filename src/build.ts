@@ -15,7 +15,7 @@ export const GRAPH_FILE = "graph.json";
 export function languageOf(rel: string): "ts" | "java" | "config" | "asset" {
   if (rel.endsWith(".java")) return "java";
   if (/\.(html|scss|css)$/.test(rel)) return "asset";
-  return /\.(ya?ml|sql|conf|properties|md)$/.test(rel) || /(^|\/)\.env[^/]*$/.test(rel) || /(^|\/)Dockerfile[^/]*$/.test(rel) ? "config" : "ts";
+  return /\.(ya?ml|sql|conf|properties|md)$/.test(rel) || /(^|\/)(\.env[^/]*|package\.json|pom\.xml)$/.test(rel) || /(^|\/)Dockerfile[^/]*$/.test(rel) ? "config" : "ts";
 }
 
 const CANDIDATE_EXTS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"];
@@ -50,6 +50,8 @@ export function link(files: Record<string, FileFacts>, aliases: Alias[] = []): {
   // k8s `Kind/name` -> declaring files
   const objectOwners = new Map<string, string[]>();
   for (const f of Object.values(files)) if (f.lang === "config") for (const sym of f.symbols) if (sym.detail?.startsWith("k8s ")) objectOwners.set(sym.name, [...(objectOwners.get(sym.name) ?? []), f.path]);
+  const artifactOwners = new Map<string, string[]>();
+  for (const f of Object.values(files)) if (f.lang === "config") for (const sym of f.symbols) if (sym.detail === "maven artifact") artifactOwners.set(sym.name, [...(artifactOwners.get(sym.name) ?? []), f.path]);
   const pkgNode = (name: string) => {
     const id = `pkg:${name}`;
     if (!nodes.has(id)) nodes.set(id, { id, kind: "package", name });
@@ -70,6 +72,13 @@ export function link(files: Record<string, FileFacts>, aliases: Alias[] = []): {
           // a kustomize resource may be a directory: its kustomization file is the target
           const hit = [imp.specifier, `${imp.specifier}/kustomization.yaml`, `${imp.specifier}/kustomization.yml`].find((c) => known.has(c));
           edges.push({ ...base, to: `file:${hit ?? imp.specifier}`, evidence: hit ? "resolved" : "unresolved" });
+        } else if (imp.ref === "npm") {
+          edges.push({ ...base, kind: "imports", to: pkgNode(imp.specifier), evidence: "extracted" });
+        } else if (imp.ref === "maven") {
+          // a dependency whose artifactId is declared by exactly one other pom in this repo is a module of ours (name match: inferred)
+          const owners = artifactOwners.get(imp.specifier.split(":").pop()!)?.filter((p) => p !== f.path) ?? [];
+          if (owners.length === 1) edges.push({ ...base, to: `file:${owners[0]}`, evidence: "inferred" });
+          else edges.push({ ...base, kind: "imports", to: pkgNode(`maven:${imp.specifier}`), evidence: "extracted" });
         } else if (imp.ref === "doc") {
           // a link in a Markdown file: only existing indexed files become edges (images, URLs and missing targets are not noise)
           if (known.has(imp.specifier)) edges.push({ ...base, to: `file:${imp.specifier}`, evidence: "resolved" });
@@ -172,7 +181,8 @@ function resolveAlias(alias: Alias | undefined, spec: string, known: Set<string>
 }
 
 /**
- * Angular: a custom element used in a template points at the component whose `selector` is exactly that tag.
+ * Angular: a custom element, attribute (`[appFoo]`) or pipe (`|money`) used in a template points at the component, directive
+ * or pipe that declares exactly that selector or pipe name.
  * Only unique selectors are linked, and the evidence is `inferred`: the template may use a tag from a library,
  * and whether the component is actually imported into the declaring module/component is not checked.
  */
@@ -182,7 +192,7 @@ function linkSelectors(files: Record<string, FileFacts>, edges: GraphEdge[]): vo
   for (const f of Object.values(files)) {
     for (const el of f.elements ?? []) {
       const o = owners.get(el);
-      if (o?.length === 1 && o[0] !== f.path) edges.push({ from: `file:${f.path}`, to: `file:${o[0]}`, kind: "references", evidence: "inferred", specifier: `<${el}>` });
+      if (o?.length === 1 && o[0] !== f.path) edges.push({ from: `file:${f.path}`, to: `file:${o[0]}`, kind: "references", evidence: "inferred", specifier: /^[[|]/.test(el) ? el : `<${el}>` });
     }
   }
 }
@@ -193,15 +203,16 @@ function linkSelectors(files: Record<string, FileFacts>, edges: GraphEdge[]): vo
  */
 function linkServices(files: Record<string, FileFacts>, edges: GraphEdge[]): void {
   const workloads = Object.values(files).filter((f) => f.k8sPodLabels?.length);
+  const selects = (sel: Record<string, string>, w: FileFacts) => w.k8sPodLabels!.some((l) => Object.entries(sel).every(([k, v]) => l[k] === v));
+  const label = (sel: Record<string, string>) => Object.entries(sel).map(([k, v]) => `${k}=${v}`).join(",");
   for (const f of Object.values(files)) {
-    const targets = new Map<string, string>();
+    const seen = new Set<string>();
     for (const sel of f.k8sSelectors ?? []) {
-      const pairs = Object.entries(sel);
-      for (const w of workloads) {
-        if (w.path !== f.path && w.k8sPodLabels!.some((l) => pairs.every(([k, v]) => l[k] === v))) targets.set(w.path, pairs.map(([k, v]) => `${k}=${v}`).join(","));
+      for (const w of workloads.filter((x) => x.path !== f.path && !seen.has(x.path) && selects(sel, x))) {
+        seen.add(w.path);
+        edges.push({ from: `file:${f.path}`, to: `file:${w.path}`, kind: "references", evidence: "inferred", specifier: `selector ${label(sel)}` });
       }
     }
-    for (const [to, spec] of targets) edges.push({ from: `file:${f.path}`, to: `file:${to}`, kind: "references", evidence: "inferred", specifier: `selector ${spec}` });
   }
 }
 
