@@ -169,10 +169,13 @@ function linkSelectors(files: Record<string, FileFacts>, edges: GraphEdge[]): vo
 
 export interface IndexStats { parsed: number; reused: number; removed: number; files: number }
 
+/** Where the graph lives: `graphDir` when given (so a read-only repo is never written to), else `<root>/.cbtg`. */
+export const graphDirOf = (root: string, graphDir?: string) => path.resolve(graphDir ?? path.join(root, GRAPH_DIR));
+
 /** Indexes `root`. Re-parses only files whose content hash changed; links are always rebuilt. */
-export async function indexRepo(root: string): Promise<{ graph: Graph; stats: IndexStats }> {
+export async function indexRepo(root: string, graphDir?: string): Promise<{ graph: Graph; stats: IndexStats }> {
   root = path.resolve(root);
-  const previous = await loadGraph(root);
+  const previous = await loadGraph(root, graphDir);
   const { files: found, configs, skipped } = await discover(root);
   const aliases = await loadAliases(root, configs);
   const files: Record<string, FileFacts> = {};
@@ -191,7 +194,7 @@ export async function indexRepo(root: string): Promise<{ graph: Graph; stats: In
   }
   const removed = previous ? Object.keys(previous.files).filter((p) => !(p in files)).length : 0;
   const graph: Graph = { version: 1, root: path.basename(root), files, aliases, ...link(files, aliases), skipped };
-  const dir = path.join(root, GRAPH_DIR);
+  const dir = graphDirOf(root, graphDir);
   await fs.mkdir(dir, { recursive: true });
   const tmp = path.join(dir, GRAPH_FILE + ".tmp");
   await fs.writeFile(tmp, JSON.stringify(graph));
@@ -199,9 +202,9 @@ export async function indexRepo(root: string): Promise<{ graph: Graph; stats: In
   return { graph, stats: { parsed, reused, removed, files: found.length } };
 }
 
-export async function loadGraph(root: string): Promise<Graph | undefined> {
+export async function loadGraph(root: string, graphDir?: string): Promise<Graph | undefined> {
   try {
-    const g = JSON.parse(await fs.readFile(path.join(root, GRAPH_DIR, GRAPH_FILE), "utf8")) as Graph;
+    const g = JSON.parse(await fs.readFile(path.join(graphDirOf(root, graphDir), GRAPH_FILE), "utf8")) as Graph;
     return g.version === 1 ? g : undefined; // unknown/corrupt version => full rebuild
   } catch { return undefined; }
 }

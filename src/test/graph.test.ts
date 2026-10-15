@@ -130,6 +130,18 @@ test("view --graph: drawn graph data is limited, deduplicated, self-contained an
   assert.equal(graphData({ ...graph, edges: [] }).shown, 0);
 });
 
+test("graph-dir: the graph can live outside the repo, which then stays untouched", async () => {
+  const root = await fixture({ "src/a.ts": `export const a = 1;`, "src/b.ts": `import { a } from "./a"; export const b = a;` });
+  const out = await fs.mkdtemp(path.join(os.tmpdir(), "cbtg-out-"));
+  const first = await indexRepo(root, out);
+  assert.equal(first.stats.parsed, 2);
+  await assert.rejects(fs.stat(path.join(root, ".cbtg")), "no .cbtg inside the repo");
+  assert.ok((await loadGraph(root, out))?.files["src/b.ts"]);
+  assert.equal(await loadGraph(root), undefined, "default location is untouched");
+  const second = await indexRepo(root, out);
+  assert.equal(second.stats.reused, 2, "incremental cache works from the custom dir");
+});
+
 test("java: package, imports, annotations, methods, same-package and cross-package links", async () => {
   const root = await fixture({
     "src/main/java/app/user/UserService.java": `package app.user;\nimport java.util.List;\nimport jakarta.inject.Inject;\nimport app.api.Greeter;\n@ApplicationScoped\npublic class UserService extends BaseService implements Greeter {\n  public String hello() { return ""; }\n}\n`,
