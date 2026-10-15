@@ -3,15 +3,28 @@ import * as path from "node:path";
 import { discover } from "./discover.js";
 import { parseFile, TS_PARSER_VERSION } from "./parse.js";
 import { parseJava, JAVA_PARSER_VERSION } from "./java.js";
+import { parseConfig, CONFIG_PARSER_VERSION } from "./config.js";
+import { parseAsset, ASSET_PARSER_VERSION } from "./asset.js";
+import { aliasFor, loadAliases, type Alias } from "./tsconfig.js";
 import type { FileFacts, Graph, GraphEdge, GraphNode } from "./model.js";
 
 export const GRAPH_DIR = ".cbtg";
 export const GRAPH_FILE = "graph.json";
 
+export function languageOf(rel: string): "ts" | "java" | "config" | "asset" {
+  if (rel.endsWith(".java")) return "java";
+  if (/\.(html|scss|css)$/.test(rel)) return "asset";
+  return /\.(ya?ml|sql)$/.test(rel) || /(^|\/)Dockerfile[^/]*$/.test(rel) ? "config" : "ts";
+}
+
 const CANDIDATE_EXTS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"];
 
 function resolveRelative(from: string, spec: string, known: Set<string>): string | undefined {
-  const base = path.posix.normalize(path.posix.join(path.posix.dirname(from), spec));
+  return resolveBase(path.posix.normalize(path.posix.join(path.posix.dirname(from), spec)), known);
+}
+
+/** Finds the indexed file a path-like import points at (extension and index-file lookup). */
+function resolveBase(base: string, known: Set<string>): string | undefined {
   // ESM-style `./x.js` may point at `./x.ts`
   const stripped = base.replace(/\.[cm]?jsx?$/, "");
   const candidates = [base, ...CANDIDATE_EXTS.map((e) => base + e), ...CANDIDATE_EXTS.map((e) => stripped + e),
@@ -20,7 +33,7 @@ function resolveRelative(from: string, spec: string, known: Set<string>): string
 }
 
 /** Pure: turns per-file facts into nodes and edges. Always recomputed over all files (cheap, avoids stale cross-file data). */
-export function link(files: Record<string, FileFacts>): { nodes: GraphNode[]; edges: GraphEdge[] } {
+export function link(files: Record<string, FileFacts>, aliases: Alias[] = []): { nodes: GraphNode[]; edges: GraphEdge[] } {
   const nodes = new Map<string, GraphNode>();
   const edges: GraphEdge[] = [];
   const known = new Set(Object.keys(files));
@@ -45,6 +58,18 @@ export function link(files: Record<string, FileFacts>): { nodes: GraphNode[]; ed
       const id = `sym:${f.path}#${s.name}`;
       if (!nodes.has(id)) nodes.set(id, { id, kind: "symbol", path: f.path, ...s });
       edges.push({ from: fileId, to: id, kind: "declares", evidence: "extracted", line: s.lines?.[0] });
+    }
+    if (f.lang === "config") {
+      for (const imp of f.imports) {
+        const base = { from: fileId, specifier: imp.specifier, line: imp.line, kind: "references" as const };
+        if (imp.ref === "path") {
+          const hit = known.has(imp.specifier) ? imp.specifier : undefined;
+          edges.push({ ...base, to: `file:${hit ?? imp.specifier}`, evidence: hit ? "resolved" : "unresolved" });
+        } else {
+          edges.push({ ...base, to: pkgNode(`${imp.ref}:${imp.specifier}`), evidence: "inferred" });
+        }
+      }
+      continue;
     }
     if (f.lang === "java") {
       for (const imp of f.imports) {
@@ -71,13 +96,16 @@ export function link(files: Record<string, FileFacts>): { nodes: GraphNode[]; ed
       continue;
     }
     for (const imp of f.imports) {
-      const kind = imp.reexport ? "reexports" : "imports";
-      if (imp.specifier.startsWith(".")) {
+      const kind = imp.ref === "path" ? "references" : imp.reexport ? "reexports" : "imports";
+      const alias = !imp.specifier.startsWith(".") ? resolveAlias(aliasFor(aliases, f.path), imp.specifier, known) : undefined;
+      if (alias) {
+        edges.push({ from: fileId, to: `file:${alias.target ?? alias.attempted}`, kind, evidence: alias.target ? "resolved" : "unresolved", specifier: imp.specifier, line: imp.line });
+      } else if (imp.specifier.startsWith(".")) {
         const target = resolveRelative(f.path, imp.specifier, known);
         edges.push({ from: fileId, to: target ? `file:${target}` : `file:${path.posix.join(path.posix.dirname(f.path), imp.specifier)}`,
           kind, evidence: target ? "resolved" : "unresolved", specifier: imp.specifier, line: imp.line });
       } else {
-        // Bare specifier: assumed external package. Could be a tsconfig path alias (not supported yet), so only "inferred".
+        // Bare specifier: assumed external package. No tsconfig alias matched, so this is only "inferred".
         const m = imp.specifier.match(/^(@[^/]+\/[^/]+|[^/]+)/);
         const name = m ? m[1] : imp.specifier;
         const id = `pkg:${name.replace(/^node:/, "")}`;
@@ -86,7 +114,48 @@ export function link(files: Record<string, FileFacts>): { nodes: GraphNode[]; ed
       }
     }
   }
+  linkSelectors(files, edges);
   return { nodes: [...nodes.values()], edges };
+}
+
+/** `paths` / `baseUrl` lookup. Returns undefined when the specifier is not an alias at all (so it stays a package). */
+function resolveAlias(alias: Alias | undefined, spec: string, known: Set<string>): { target?: string; attempted: string } | undefined {
+  if (!alias) return undefined;
+  for (const r of alias.rules) {
+    const hit = r.star ? spec.length >= r.prefix.length + r.suffix.length && spec.startsWith(r.prefix) && spec.endsWith(r.suffix) : spec === r.prefix;
+    if (!hit) continue;
+    const captured = r.star ? spec.slice(r.prefix.length, spec.length - r.suffix.length) : "";
+    let first = "";
+    for (const t of r.targets) {
+      const base = path.posix.normalize(path.posix.join(alias.pathsBase, t.replace("*", captured)));
+      first ||= base;
+      const target = resolveBase(base, known);
+      if (target) return { target, attempted: base };
+    }
+    return { attempted: first || spec };
+  }
+  if (alias.baseDir !== undefined) {
+    const base = path.posix.normalize(path.posix.join(alias.baseDir, spec));
+    const target = resolveBase(base, known);
+    if (target) return { target, attempted: base };
+  }
+  return undefined;
+}
+
+/**
+ * Angular: a custom element used in a template points at the component whose `selector` is exactly that tag.
+ * Only unique selectors are linked, and the evidence is `inferred`: the template may use a tag from a library,
+ * and whether the component is actually imported into the declaring module/component is not checked.
+ */
+function linkSelectors(files: Record<string, FileFacts>, edges: GraphEdge[]): void {
+  const owners = new Map<string, string[]>();
+  for (const f of Object.values(files)) for (const sel of f.selectors ?? []) owners.set(sel, [...(owners.get(sel) ?? []), f.path]);
+  for (const f of Object.values(files)) {
+    for (const el of f.elements ?? []) {
+      const o = owners.get(el);
+      if (o?.length === 1 && o[0] !== f.path) edges.push({ from: `file:${f.path}`, to: `file:${o[0]}`, kind: "references", evidence: "inferred", specifier: `<${el}>` });
+    }
+  }
 }
 
 export interface IndexStats { parsed: number; reused: number; removed: number; files: number }
@@ -95,7 +164,8 @@ export interface IndexStats { parsed: number; reused: number; removed: number; f
 export async function indexRepo(root: string): Promise<{ graph: Graph; stats: IndexStats }> {
   root = path.resolve(root);
   const previous = await loadGraph(root);
-  const { files: found, skipped } = await discover(root);
+  const { files: found, configs, skipped } = await discover(root);
+  const aliases = await loadAliases(root, configs);
   const files: Record<string, FileFacts> = {};
   let parsed = 0, reused = 0;
   for (const rel of found) {
@@ -105,13 +175,13 @@ export async function indexRepo(root: string): Promise<{ graph: Graph; stats: In
     const { createHash } = await import("node:crypto");
     const hash = createHash("sha256").update(text).digest("hex");
     const prev = previous?.files[rel];
-    const isJava = rel.endsWith(".java");
-    const parserVersion = isJava ? JAVA_PARSER_VERSION : TS_PARSER_VERSION;
+    const kind = languageOf(rel);
+    const parserVersion = { ts: TS_PARSER_VERSION, java: JAVA_PARSER_VERSION, config: CONFIG_PARSER_VERSION, asset: ASSET_PARSER_VERSION }[kind];
     if (prev && prev.hash === hash && prev.parser === parserVersion) { files[rel] = prev; reused++; }
-    else { files[rel] = isJava ? await parseJava(rel, text) : parseFile(rel, text); parsed++; }
+    else { files[rel] = kind === "java" ? await parseJava(rel, text) : kind === "config" ? parseConfig(rel, text) : kind === "asset" ? parseAsset(rel, text) : parseFile(rel, text); parsed++; }
   }
   const removed = previous ? Object.keys(previous.files).filter((p) => !(p in files)).length : 0;
-  const graph: Graph = { version: 1, root: path.basename(root), files, ...link(files), skipped };
+  const graph: Graph = { version: 1, root: path.basename(root), files, aliases, ...link(files, aliases), skipped };
   const dir = path.join(root, GRAPH_DIR);
   await fs.mkdir(dir, { recursive: true });
   const tmp = path.join(dir, GRAPH_FILE + ".tmp");

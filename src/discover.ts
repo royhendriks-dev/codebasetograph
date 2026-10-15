@@ -5,7 +5,8 @@ const DEFAULT_IGNORED_DIRS = new Set([
   ".git", "node_modules", "dist", "build", "out", "coverage", ".angular", ".next", ".nx",
   ".cache", ".cbtg", "tmp", ".turbo", "target", ".gradle", ".idea",
 ]);
-const EXTS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".java"]);
+const EXTS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".java", ".yml", ".yaml", ".sql", ".html", ".scss", ".css"]);
+const isIndexable = (name: string) => EXTS.has(path.extname(name)) || /^Dockerfile(\.[\w.-]+)?$/.test(name);
 const MAX_BYTES = 1_000_000;
 
 /** Minimal .gitignore support: plain names, `dir/`, `*.ext`, `/anchored`. Negation is not supported. */
@@ -32,6 +33,8 @@ function compileIgnore(lines: string[]): (rel: string, isDir: boolean) => boolea
 
 export interface Discovered {
   files: string[];
+  /** tsconfig*.json / jsconfig.json files, for alias resolution. Read as JSON only. */
+  configs: string[];
   skipped: Array<{ path: string; reason: string }>;
 }
 
@@ -43,6 +46,7 @@ export async function discover(root: string): Promise<Discovered> {
   } catch { /* no .gitignore */ }
 
   const files: string[] = [];
+  const configs: string[] = [];
   const skipped: Discovered["skipped"] = [];
 
   async function walk(dir: string): Promise<void> {
@@ -55,7 +59,9 @@ export async function discover(root: string): Promise<Discovered> {
         if (DEFAULT_IGNORED_DIRS.has(e.name) || ignored(rel, true)) continue;
         await walk(rel);
       } else if (e.isFile()) {
-        if (!EXTS.has(path.extname(e.name)) || ignored(rel, false)) continue;
+        if (ignored(rel, false)) continue;
+        if (/^(tsconfig(\.[\w.-]+)?|jsconfig)\.json$/.test(e.name)) { configs.push(rel); continue; }
+        if (!isIndexable(e.name)) continue;
         if (/\.d\.[cm]?ts$/.test(e.name) || /\.min\.[cm]?js$/.test(e.name)) {
           skipped.push({ path: rel, reason: "generated/declaration file" });
           continue;
@@ -70,5 +76,5 @@ export async function discover(root: string): Promise<Discovered> {
     }
   }
   await walk("");
-  return { files, skipped };
+  return { files, configs, skipped };
 }
