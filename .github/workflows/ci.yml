@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests en coverage (>= 80%)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # SonarCloud heeft de volledige historie nodig
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Tests draaien met coverage-drempel van 80%
+        run: npm run test:coverage
+        env:
+          NODE_OPTIONS: --enable-source-maps
+      - name: SonarCloud-scan (quality gate)
+        # Secrets zijn niet beschikbaar voor PR's vanuit forks; die slaan de scan over.
+        if: ${{ github.event.pull_request.head.repo.full_name == github.repository || github.event_name == 'push' }}
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: -Dsonar.qualitygate.wait=true
