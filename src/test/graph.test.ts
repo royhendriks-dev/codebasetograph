@@ -473,3 +473,13 @@ test("query: identifier tokens, stem matching and rare words ranking", async () 
   assert.equal(context(graph, "switch the language", 800).items[0].path, "src/Lang.ts");
   assert.equal(context(graph, "request lang", 800).items[0].path, "src/Lang.ts", "a rare word outweighs a common one");
 });
+
+test("index: the default graph directory is excluded from git locally, once", async () => {
+  const root = await fixture({ "src/a.ts": "export const a = 1;\n", ".git/info/exclude": "# local\n" });
+  await indexRepo(root);
+  await indexRepo(root);
+  assert.equal(await fs.readFile(path.join(root, ".git", "info", "exclude"), "utf8"), "# local\n.cbtg/\n");
+  const kept = await fixture({ "src/a.ts": "export const a = 1;\n", ".git/HEAD": "ref: refs/heads/main\n" });
+  await indexRepo(kept, path.join(kept, "..", "elsewhere-graph"));
+  await assert.rejects(fs.readFile(path.join(kept, ".git", "info", "exclude"), "utf8"), "a graph kept elsewhere touches nothing in the repo");
+});
