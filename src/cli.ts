@@ -4,6 +4,7 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { renderHtml } from "./view.js";
 import { renderGraphHtml, DEFAULT_MAX_NODES } from "./viewGraph.js";
+import { watchRepo } from "./watch.js";
 import { handleLine, hookOutput } from "./agent.js";
 import { createInterface } from "node:readline";
 import { loadSynonyms } from "./words.js";
@@ -18,6 +19,7 @@ const positional = rest.filter((a, i) => !a.startsWith("--") && !(rest[i - 1] ??
 
 const usage = `cbtg <command> [--root dir] [--graph-dir dir]   (--graph-dir keeps the graph outside the repo, which then stays untouched)
   index                       build or update .cbtg/graph.json
+  watch [--debounce ms]       index once, then re-index after every file change (Ctrl+C to stop)
   find <term>                 symbols and files whose name contains term
   deps <file>                 what <file> imports
   dependents <file>           who imports <file>
@@ -35,6 +37,13 @@ async function main() {
   if (cmd === "index") {
     const { stats, graph } = await indexRepo(root, graphDir);
     console.log(`indexed ${stats.files} files (parsed ${stats.parsed}, reused ${stats.reused}, removed ${stats.removed}); ${graph.nodes.length} nodes, ${graph.edges.length} edges, ${graph.skipped.length} skipped`);
+    return;
+  }
+  if (cmd === "watch") {
+    const ctl = new AbortController();
+    process.once("SIGINT", () => ctl.abort());
+    process.once("SIGTERM", () => ctl.abort());
+    await watchRepo({ root, graphDir, debounceMs: flag("debounce") ? Number(flag("debounce")) : undefined, signal: ctl.signal, onIndex: (line, ok) => (ok ? console.log : console.error)(line) });
     return;
   }
   if (cmd === "mcp") {

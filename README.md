@@ -50,6 +50,10 @@ Every pull request in this repository follows the same checklist:
 
 Jira tickets and Confluence pages are written in Dutch, in the same format as the portfolio-website tickets, and end with "Geschreven door: <model>, via Claude Code, op <date>". The README is written in English.
 
+## Keeping the graph fresh
+
+`cbtg watch [--root dir] [--graph-dir dir] [--debounce ms]` indexes once and then re-indexes (incrementally: only changed files are parsed) after every file change, until Ctrl+C. Changes inside `.git`, `node_modules`, build output and the graph directory are ignored; runs never overlap. It uses `fs.watch` with `recursive`, which needs Node 20 or newer; on a network drive or in some containers file events can be missing, then re-run `cbtg index`.
+
 ## Letting an agent use it automatically
 
 Two optional entry points, both read-only (they only read the graph, never run or write repository code). Run `cbtg index` first; both read `.cbtg/graph.json` of the current directory (or pass `--root`/`--graph-dir`).
