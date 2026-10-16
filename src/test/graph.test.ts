@@ -8,7 +8,7 @@ import * as path from "node:path";
 import * as vm from "node:vm";
 import { indexRepo, loadGraph } from "../build.js";
 import { parseFile } from "../parse.js";
-import { context, dependents, findSymbols } from "../query.js";
+import { context, dependents, findSymbols, nameTokens, sharesStem } from "../query.js";
 
 async function fixture(files: Record<string, string>): Promise<string> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "cbtg-"));
@@ -455,4 +455,21 @@ test("links: deps, related and path follow config references and Java supertypes
   assert.deepEqual(related(graph, "api/Dockerfile").map((r) => r.path), ["docker-compose.yml"]);
   assert.deepEqual(shortestPath(graph, "docker-compose.yml", "api/Dockerfile")?.map((s) => s.path), ["docker-compose.yml", "api/Dockerfile"]);
   assert.deepEqual(shortestPath(graph, "src/main/java/a/Impl.java", "src/main/java/a/Base.java")?.map((s) => s.path), ["src/main/java/a/Impl.java", "src/main/java/a/Base.java"]);
+});
+
+test("query: identifier tokens, stem matching and rare words ranking", async () => {
+  assert.deepEqual(nameTokens("LoginRateLimiter.java"), ["login", "rate", "limiter", "java"]);
+  assert.deepEqual(nameTokens("HTTPServer"), ["http", "server"]);
+  assert.equal(sharesStem("lang", "language"), true);
+  assert.equal(sharesStem("failure", "failures"), true);
+  assert.equal(sharesStem("log", "login"), false, "stems under 4 characters never match");
+  const root = await fixture({
+    "src/Lang.ts": "export enum Lang { Nl, En }\n",
+    "src/request-a.ts": "export const requestA = 1;\n",
+    "src/request-b.ts": "export const requestB = 1;\n",
+    "src/request-c.ts": "export const requestC = 1;\n",
+  });
+  const { graph } = await indexRepo(root);
+  assert.equal(context(graph, "switch the language", 800).items[0].path, "src/Lang.ts");
+  assert.equal(context(graph, "request lang", 800).items[0].path, "src/Lang.ts", "a rare word outweighs a common one");
 });

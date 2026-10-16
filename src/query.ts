@@ -47,24 +47,57 @@ export function isTestPath(p: string): boolean {
   return /\.(spec|test)\.[cm]?[jt]sx?$/.test(p) || /(^|\/)(__tests__|tests?|e2e)\//.test(p);
 }
 
+/** Splits an identifier or file name into lower-case words: `LoginRateLimiter.java` gives login, rate, limiter, java. */
+export function nameTokens(name: string): string[] {
+  return name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+}
+
+/** A name word and a task word match when they are equal or one is a prefix of the other (lang/language, failure/failures); 4 characters minimum so short words do not match everything. */
+export function sharesStem(token: string, word: string): boolean {
+  const [short, long] = token.length <= word.length ? [token, word] : [word, token];
+  return short.length >= 4 && long.startsWith(short);
+}
+
 /**
  * Plain, explainable scoring (a baseline to measure against, not a quality claim):
  * exact name match 3, name contains word 2, path contains word 1; exported symbols +1; tests x0.3; Markdown headings, npm scripts and maven artifacts x0.3; config keys x0.5 (many per file, would crowd out code).
  * Non-exported symbols need a name match; a path-only match is kept for files, not for symbols.
  */
-export function scoreNode(n: GraphNode, words: string[]): number {
+export function scoreNode(n: GraphNode, words: string[], weight: (w: string) => number = () => 1): number {
   const name = n.name.toLowerCase(), path = (n.path ?? "").toLowerCase();
+  const tokens = nameTokens(n.name);
   let s = 0;
   for (const w of words) {
-    if (name === w) s += 3;
-    else if (name.includes(w)) s += 2;
-    else if (n.kind === "file" && path.includes(w)) s += 1;
+    const k = weight(w);
+    if (name === w) s += 3 * k;
+    else if (name.includes(w)) s += 2 * k;
+    else if (tokens.some((t) => sharesStem(t, w))) s += 1.5 * k;
+    else if (n.kind === "file" && path.includes(w)) s += k;
   }
   if (s === 0) return 0;
   if (n.kind === "symbol" && n.exported) s += 1;
   if ((n.path && isTestPath(n.path)) || n.detail?.startsWith("md h") || n.detail === "npm script" || n.detail === "maven artifact" || (n.kind === "file" && n.path?.endsWith(".md"))) s *= 0.3;
   if (n.detail === "config key") s *= 0.5;
   return s;
+}
+
+/**
+ * Rarer words say more: a word that appears in the names of many files ("request", "frontend") is weighted down, one that
+ * appears in few ("limiter") keeps full weight. Computed from the graph itself, so it adapts to any repository.
+ */
+export function wordWeights(g: Graph, words: string[]): (w: string) => number {
+  const files = new Set(g.nodes.filter((n) => n.path).map((n) => n.path!));
+  const total = Math.max(files.size, 2);
+  const hit = new Map<string, Set<string>>(words.map((w) => [w, new Set<string>()]));
+  for (const n of g.nodes) {
+    if (!n.path || n.kind === "package") continue;
+    const name = n.name.toLowerCase(), tokens = nameTokens(n.name);
+    for (const w of words) if (name.includes(w) || tokens.some((t) => sharesStem(t, w))) hit.get(w)!.add(n.path);
+  }
+  return (w) => {
+    const df = hit.get(w)?.size ?? 0;
+    return df === 0 ? 1 : Math.min(1, Math.max(0.2, Math.log(total / df) / Math.log(total)));
+  };
 }
 
 export interface ContextItem { path: string; lines?: [number, number]; why: string; evidence: string }
@@ -76,14 +109,24 @@ export interface ContextItem { path: string; lines?: [number, number]; why: stri
  */
 export function context(g: Graph, task: string, budgetTokens = 800, synonyms: Record<string, string[]> = {}): { text: string; items: ContextItem[]; truncated: boolean } {
   const words = taskWords(task, synonyms);
+  const weight = wordWeights(g, words);
   const score = new Map<string, number>();
   const items: ContextItem[] = [];
   for (const n of g.nodes) {
     if (n.kind === "package") continue;
-    const s = scoreNode(n, words);
+    const s = scoreNode(n, words, weight);
     if (s > 0) score.set(n.id, s);
   }
-  const ranked = [...score].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([id]) => g.nodes.find((n) => n.id === id)!);
+  const byId = new Map(g.nodes.map((n) => [n.id, n]));
+  // Files rank by their best match plus half of every further match, so a file where several names match beats a file with one lucky symbol.
+  const fileScore = new Map<string, number>();
+  for (const [id, s] of [...score].sort((a, b) => b[1] - a[1])) {
+    const p = byId.get(id)!.path!;
+    fileScore.set(p, fileScore.has(p) ? fileScore.get(p)! + s / 2 : s);
+  }
+  const ranked = [...score]
+    .sort((a, b) => fileScore.get(byId.get(b[0])!.path!)! - fileScore.get(byId.get(a[0])!.path!)! || b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([id]) => byId.get(id)!);
   const seenFiles = new Set<string>();
   for (const n of ranked) {
     items.push({ path: n.path!, lines: n.lines, why: `${n.kind === "symbol" ? n.detail + " " : "file "}${n.name}${n.exported ? " (exported)" : ""} matches task words`, evidence: "extracted" });
