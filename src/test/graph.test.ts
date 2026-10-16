@@ -541,6 +541,8 @@ test("install git: graph committed, attributes + workflow + AGENTS block, idempo
   await indexRepo(root);
   assert.equal(await fs.readFile(path.join(root, ".git", "info", "exclude"), "utf8"), "# local\n", "index respects a tracked graph");
   assert.ok(wf.includes("cancel-in-progress") && !wf.includes("\\$"), "workflow text is unescaped");
+  assert.ok(wf.includes("github.actor != 'dependabot[bot]'"), "Dependabot PRs have a read-only token and are skipped");
+  assert.ok(wf.includes("token: ${{ secrets.CBTG_PUSH_TOKEN || github.token }}"), "optional PAT so CI runs on the bot commit");
   assert.ok((await removeGit(root)).every((r) => r.action === "removed"));
   assert.equal(await fs.readFile(path.join(root, ".gitattributes"), "utf8"), "*.png binary\n");
   assert.ok((await removeGit(root)).every((r) => r.action === "absent"));
