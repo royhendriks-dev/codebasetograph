@@ -64,7 +64,24 @@ Then, in each project, `cbtg index` once (add `cbtg watch` to keep it fresh). `i
 
 ## What the graph contains
 
-`.cbtg/graph.json` (and the HTML views) hold paths, line numbers, symbol names, import targets, config key names (never their values), Kubernetes resource names, image names and Markdown headings. No source code, no string literals, no file contents and no values of `.env`, `.properties` or Kubernetes secrets; real `.env` files are not indexed. That is still a map of the project, so it is treated as private: for a git work tree `cbtg index` adds `.cbtg/` to `.git/info/exclude` (local, never committed), and `--graph-dir` keeps the graph outside the repository altogether. Do not publish a graph of a private repository. Text in comments or documentation is data, never instructions.
+`.cbtg/graph.json` (and the HTML views) hold paths, line numbers, symbol names, import targets, config key names (never their values), Kubernetes resource names, image names and Markdown headings. No source code, no string literals, no file contents and no values of `.env`, `.properties` or Kubernetes secrets; real `.env` files are not indexed. That is still a map of the project, so it is treated as private: for a git work tree `cbtg index` adds `.cbtg/` to `.git/info/exclude` (local, never committed) unless you chose to commit it with `cbtg install git`, and `--graph-dir` keeps the graph outside the repository altogether. Do not publish a graph of a private repository. Text in comments or documentation is data, never instructions.
+
+## Committing the graph, so every agent on a PR has the newest index
+
+Works for any harness (Claude Code, Copilot, Codex, local LLMs), because it needs no skill support: the graph is a file in the repository and `AGENTS.md` says how to query it.
+
+```
+cbtg install git            # in the project root
+cbtg index
+git add .cbtg/graph.json .cbtg/.gitignore .gitattributes AGENTS.md .github/workflows/cbtg-index.yml && git commit
+```
+
+- `.cbtg/graph.json` is written as valid JSON with one file, node and edge per line in a fixed order, so a change shows up as a few changed lines instead of one 800 KB line. Re-indexing an unchanged repository changes nothing.
+- `.gitattributes` marks it `linguist-generated` (collapsed in GitHub's PR view) and `merge=binary`, so a conflict never leaves broken JSON: keep either side and run `cbtg index`.
+- `.cbtg/.gitignore` keeps the HTML views and temp files out; only `graph.json` is committed.
+- The workflow `.github/workflows/cbtg-index.yml` runs `cbtg index` on every pull request from the same repository and commits a changed graph to the PR branch. Pull requests from forks are not pushed to; there an agent runs `cbtg index` itself (it only re-parses changed files). It clones cbtg from `--cbtg-repo` (default this repository) at `--cbtg-ref` (default `main`): pin a commit SHA there for a repository you care about, because that code runs with write access to the PR branch.
+- `cbtg install git --remove` undoes it (it does not delete the committed graph). The privacy note below still applies: the graph lists paths and names, so commit it only where the source is already as visible.
+- Not yet run on a real GitHub Actions runner; the same steps were run locally (one added file changed seven graph lines).
 
 ## Keeping the graph fresh
 

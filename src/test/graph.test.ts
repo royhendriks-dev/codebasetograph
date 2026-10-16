@@ -6,9 +6,9 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import * as path from "node:path";
 import * as vm from "node:vm";
-import { indexRepo, loadGraph } from "../build.js";
+import { indexRepo, loadGraph, serializeGraph } from "../build.js";
 import { parseFile } from "../parse.js";
-import { AGENTS_END, AGENTS_START, claudeSkillFile, installAgents, installClaude, nextSteps, removeAgents, removeClaude } from "../install.js";
+import { AGENTS_END, AGENTS_START, claudeSkillFile, installAgents, installClaude, installGit, nextSteps, removeAgents, removeClaude, removeGit, WORKFLOW_FILE } from "../install.js";
 import { context, dependents, findSymbols, nameTokens, sharesStem } from "../query.js";
 
 async function fixture(files: Record<string, string>): Promise<string> {
@@ -512,4 +512,35 @@ test("install: skill for Claude Code, managed block in AGENTS.md, both reversibl
   assert.equal((await removeAgents(fresh)).action, "removed");
   await assert.rejects(fs.stat(path.join(fresh, "AGENTS.md")), "a file that only held the block is deleted");
   assert.match(nextSteps("/opt/cbtg/dist/cli.js"), /claude mcp add cbtg -- node \/opt\/cbtg\/dist\/cli\.js mcp/);
+});
+
+test("graph file: valid JSON, one file/node/edge per line, identical on every run", async () => {
+  const root = await fixture(angular);
+  const { graph } = await indexRepo(root);
+  const text = await fs.readFile(path.join(root, ".cbtg", "graph.json"), "utf8");
+  assert.deepEqual(JSON.parse(text), JSON.parse(JSON.stringify(graph)));
+  assert.ok(text.split("\n").length > graph.nodes.length + graph.edges.length, "line per node and edge");
+  assert.ok(text.split("\n").some((l) => l.startsWith('"src/app/user.service.ts":')), "line per file");
+  await indexRepo(root);
+  assert.equal(await fs.readFile(path.join(root, ".cbtg", "graph.json"), "utf8"), text, "re-indexing an unchanged repo changes nothing");
+  assert.equal(serializeGraph(graph), text);
+});
+
+test("install git: graph committed, attributes + workflow + AGENTS block, idempotent, reversible", async () => {
+  const root = await fixture({ "src/a.ts": "export const a = 1;\n", ".git/info/exclude": "# local\n.cbtg/\n", ".gitattributes": "*.png binary\n" });
+  const first = await installGit(root, { repo: "https://example.com/cbtg.git", ref: "v1" });
+  assert.deepEqual(first.map((r) => r.action), ["updated", "created", "created", "created"]);
+  assert.deepEqual((await installGit(root, { repo: "https://example.com/cbtg.git", ref: "v1" })).map((r) => r.action), ["unchanged", "unchanged", "unchanged", "unchanged"]);
+  assert.equal(await fs.readFile(path.join(root, ".git", "info", "exclude"), "utf8"), "# local\n", "no longer hidden");
+  const attrs = await fs.readFile(path.join(root, ".gitattributes"), "utf8");
+  assert.ok(attrs.startsWith("*.png binary\n") && attrs.includes(".cbtg/graph.json linguist-generated=true merge=binary"));
+  assert.equal(await fs.readFile(path.join(root, ".cbtg", ".gitignore"), "utf8"), "*\n!.gitignore\n!graph.json\n");
+  const wf = await fs.readFile(path.join(root, WORKFLOW_FILE), "utf8");
+  assert.ok(wf.includes("CBTG_REPO: https://example.com/cbtg.git") && wf.includes("CBTG_REF: v1") && wf.includes("${{ github.event.pull_request.head.ref }}"));
+  await indexRepo(root);
+  assert.equal(await fs.readFile(path.join(root, ".git", "info", "exclude"), "utf8"), "# local\n", "index respects a tracked graph");
+  assert.ok(wf.includes("cancel-in-progress") && !wf.includes("\\$"), "workflow text is unescaped");
+  assert.ok((await removeGit(root)).every((r) => r.action === "removed"));
+  assert.equal(await fs.readFile(path.join(root, ".gitattributes"), "utf8"), "*.png binary\n");
+  assert.ok((await removeGit(root)).every((r) => r.action === "absent"));
 });
