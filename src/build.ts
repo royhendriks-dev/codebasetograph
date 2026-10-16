@@ -279,6 +279,22 @@ export interface IndexStats { parsed: number; reused: number; removed: number; f
 /** Where the graph lives: `graphDir` when given (so a read-only repo is never written to), else `<root>/.cbtg`. */
 export const graphDirOf = (root: string, graphDir?: string) => path.resolve(graphDir ?? path.join(root, GRAPH_DIR));
 
+/**
+ * The graph lists paths, symbol names, config key names and Markdown headings of the repository, so it must not be committed
+ * by accident. For a graph inside a git work tree, `.cbtg/` is added to `.git/info/exclude`: a local file that is never
+ * committed or pushed, unlike `.gitignore`. Best effort; a graph kept elsewhere via `--graph-dir` needs nothing.
+ */
+async function keepOutOfGit(root: string): Promise<void> {
+  const exclude = path.join(root, ".git", "info", "exclude");
+  try {
+    if (!(await fs.stat(path.join(root, ".git"))).isDirectory()) return;
+    const current = await fs.readFile(exclude, "utf8").catch(() => "");
+    if (current.split(/\r?\n/).some((l) => l.trim() === `${GRAPH_DIR}/`)) return;
+    await fs.mkdir(path.dirname(exclude), { recursive: true });
+    await fs.writeFile(exclude, `${current}${current && !current.endsWith("\n") ? "\n" : ""}${GRAPH_DIR}/\n`);
+  } catch { /* no git work tree or not writable: nothing to protect */ }
+}
+
 /** Indexes `root`. Re-parses only files whose content hash changed; links are always rebuilt. */
 export async function indexRepo(root: string, graphDir?: string): Promise<{ graph: Graph; stats: IndexStats }> {
   root = path.resolve(root);
@@ -303,6 +319,7 @@ export async function indexRepo(root: string, graphDir?: string): Promise<{ grap
   const graph: Graph = { version: 1, root: path.basename(root), files, aliases, ...link(files, aliases), skipped };
   const dir = graphDirOf(root, graphDir);
   await fs.mkdir(dir, { recursive: true });
+  if (!graphDir) await keepOutOfGit(root);
   const tmp = path.join(dir, GRAPH_FILE + ".tmp");
   await fs.writeFile(tmp, JSON.stringify(graph));
   await fs.rename(tmp, path.join(dir, GRAPH_FILE)); // atomic replace: a crash never leaves a half-written graph
