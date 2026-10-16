@@ -105,12 +105,16 @@ concurrency:
 jobs:
   index:
     # Pull requests from forks cannot be pushed to; those run \`cbtg index\` themselves.
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    # Dependabot gets a read-only token, so \`git push\` would fail there.
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: \${{ github.event.pull_request.head.ref }}
+          # A push with the default token does not start CI on the new commit. When the repository secret
+          # CBTG_PUSH_TOKEN exists (fine-grained PAT, contents: write on this repository only), the push uses it and CI runs.
+          token: \${{ secrets.CBTG_PUSH_TOKEN || github.token }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
