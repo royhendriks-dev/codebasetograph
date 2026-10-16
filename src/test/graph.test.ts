@@ -537,6 +537,7 @@ test("install git: graph committed, attributes + workflow + AGENTS block, idempo
   assert.equal(await fs.readFile(path.join(root, ".cbtg", ".gitignore"), "utf8"), "*\n!.gitignore\n!graph.json\n");
   const wf = await fs.readFile(path.join(root, WORKFLOW_FILE), "utf8");
   assert.ok(wf.includes("CBTG_REPO: https://example.com/cbtg.git") && wf.includes("CBTG_REF: v1") && wf.includes("${{ github.event.pull_request.head.ref }}"));
+  assert.ok(wf.includes('fetch -q --depth 1 "$CBTG_REPO" "$CBTG_REF"') && !wf.includes("--branch"), "a commit SHA must work as ref: git clone --branch only takes branch or tag names");
   await indexRepo(root);
   assert.equal(await fs.readFile(path.join(root, ".git", "info", "exclude"), "utf8"), "# local\n", "index respects a tracked graph");
   assert.ok(wf.includes("cancel-in-progress") && !wf.includes("\\$"), "workflow text is unescaped");

@@ -119,7 +119,9 @@ jobs:
           CBTG_REPO: ${repo}
           CBTG_REF: ${ref}
         run: |
-          git clone --depth 1 --branch "$CBTG_REF" "$CBTG_REPO" "$RUNNER_TEMP/cbtg"
+          git init -q "$RUNNER_TEMP/cbtg"
+          git -C "$RUNNER_TEMP/cbtg" fetch -q --depth 1 "$CBTG_REPO" "$CBTG_REF"
+          git -C "$RUNNER_TEMP/cbtg" checkout -q FETCH_HEAD
           (cd "$RUNNER_TEMP/cbtg" && npm ci --no-audit --no-fund && npm run build)
       - name: Update the graph
         run: node "$RUNNER_TEMP/cbtg/dist/cli.js" index
