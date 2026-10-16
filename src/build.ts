@@ -285,6 +285,7 @@ export const graphDirOf = (root: string, graphDir?: string) => path.resolve(grap
  * committed or pushed, unlike `.gitignore`. Best effort; a graph kept elsewhere via `--graph-dir` needs nothing.
  */
 async function keepOutOfGit(root: string): Promise<void> {
+  if (await graphIsTracked(root)) return;
   const exclude = path.join(root, ".git", "info", "exclude");
   try {
     if (!(await fs.stat(path.join(root, ".git"))).isDirectory()) return;
@@ -295,11 +296,29 @@ async function keepOutOfGit(root: string): Promise<void> {
   } catch { /* no git work tree or not writable: nothing to protect */ }
 }
 
+/** `cbtg install git` marks the graph in `.gitattributes`; from then on it is meant to be committed and must not be hidden again. */
+export async function graphIsTracked(root: string): Promise<boolean> {
+  const attrs = await fs.readFile(path.join(root, ".gitattributes"), "utf8").catch(() => "");
+  return attrs.split(/\r?\n/).some((l) => l.trim().startsWith(`${GRAPH_DIR}/${GRAPH_FILE} `));
+}
+
+/**
+ * Valid JSON, but one file, node and edge per line in a fixed order, so a committed graph diffs per changed file
+ * instead of as one 800 KB line.
+ */
+export function serializeGraph(g: Graph): string {
+  const lines = (items: unknown[]) => items.map((i) => JSON.stringify(i)).join(",\n");
+  const files = Object.keys(g.files).sort().map((k) => `${JSON.stringify(k)}:${JSON.stringify(g.files[k])}`).join(",\n");
+  const aliases = g.aliases ? `"aliases":${JSON.stringify(g.aliases)},\n` : "";
+  return `{"version":${g.version},"root":${JSON.stringify(g.root)},\n${aliases}"files":{\n${files}\n},\n"nodes":[\n${lines(g.nodes)}\n],\n"edges":[\n${lines(g.edges)}\n],\n"skipped":[\n${lines(g.skipped)}\n]}\n`;
+}
+
 /** Indexes `root`. Re-parses only files whose content hash changed; links are always rebuilt. */
 export async function indexRepo(root: string, graphDir?: string): Promise<{ graph: Graph; stats: IndexStats }> {
   root = path.resolve(root);
   const previous = await loadGraph(root, graphDir);
   const { files: found, configs, skipped } = await discover(root);
+  found.sort();
   const aliases = await loadAliases(root, configs);
   const files: Record<string, FileFacts> = {};
   let parsed = 0, reused = 0;
@@ -321,7 +340,7 @@ export async function indexRepo(root: string, graphDir?: string): Promise<{ grap
   await fs.mkdir(dir, { recursive: true });
   if (!graphDir) await keepOutOfGit(root);
   const tmp = path.join(dir, GRAPH_FILE + ".tmp");
-  await fs.writeFile(tmp, JSON.stringify(graph));
+  await fs.writeFile(tmp, serializeGraph(graph));
   await fs.rename(tmp, path.join(dir, GRAPH_FILE)); // atomic replace: a crash never leaves a half-written graph
   return { graph, stats: { parsed, reused, removed, files: found.length } };
 }

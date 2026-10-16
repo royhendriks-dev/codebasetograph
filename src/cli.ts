@@ -9,7 +9,7 @@ import { handleLine, hookOutput } from "./agent.js";
 import { createInterface } from "node:readline";
 import { loadSynonyms } from "./words.js";
 import { loadTasks, renderReport, runBenchmark } from "./bench.js";
-import { installAgents, installClaude, nextSteps, removeAgents, removeClaude, type Scope } from "./install.js";
+import { installAgents, installClaude, installGit, nextSteps, removeAgents, removeClaude, removeGit, type Scope } from "./install.js";
 import { fileURLToPath } from "node:url";
 import { context, dependencies, dependents, explain, findSymbols, related, resolveTarget, shortestPath } from "./query.js";
 
@@ -31,6 +31,7 @@ const usage = `cbtg <command> [--root dir] [--graph-dir dir]   (--graph-dir keep
   view [--out file]           write a self-contained HTML explorer (default .cbtg/graph.html)
   view --graph [--max-nodes n] [--out file]   drawn file graph (default .cbtg/graph-map.html, 400 nodes)
   bench <tasks.json> [--files n] [--budget tokens] [--synonyms file.json]   compare grep baseline with graph context on tasks with known relevant files
+  install git [--cbtg-repo url] [--cbtg-ref ref] [--remove]   commit the graph: .gitattributes, AGENTS.md block, GitHub workflow that refreshes it on every PR
   install claude|agents [--scope user|project] [--remove]   install the skill for Claude Code (~/.claude/skills or <root>/.claude/skills), or a marked block in <root>/AGENTS.md for other agents
   mcp                         MCP server over stdio (tools: cbtg_context, cbtg_find, cbtg_deps, cbtg_dependents, cbtg_related, cbtg_explain, cbtg_path)
   hook                        Claude Code UserPromptSubmit hook: reads the hook JSON on stdin, prints task context for the prompt (nothing if there is no graph)
@@ -45,10 +46,12 @@ async function main() {
   if (cmd === "install") {
     const target = positional[0];
     const scope = (flag("scope") ?? "user") as Scope;
-    if ((target !== "claude" && target !== "agents") || (scope !== "user" && scope !== "project")) { console.error("usage: cbtg install claude|agents [--scope user|project] [--remove]"); process.exit(2); }
+    if ((target !== "claude" && target !== "agents" && target !== "git") || (scope !== "user" && scope !== "project")) { console.error("usage: cbtg install claude|agents|git [--scope user|project] [--remove] [--cbtg-repo url] [--cbtg-ref ref]"); process.exit(2); }
     const remove = rest.includes("--remove");
-    const r = target === "claude" ? await (remove ? removeClaude : installClaude)(scope, root) : await (remove ? removeAgents : installAgents)(root);
-    console.log(`${r.target}: ${r.action} ${r.file}`);
+    const results = target === "git" ? await (remove ? removeGit(root) : installGit(root, { repo: flag("cbtg-repo"), ref: flag("cbtg-ref") }))
+      : [target === "claude" ? await (remove ? removeClaude : installClaude)(scope, root) : await (remove ? removeAgents : installAgents)(root)];
+    for (const r of results) console.log(`${r.target}: ${r.action} ${r.file}`);
+    if (!remove && target === "git") console.log("Now run `cbtg index` and commit .cbtg/graph.json, .cbtg/.gitignore, .gitattributes, AGENTS.md and the workflow.");
     if (!remove) console.log(nextSteps(fileURLToPath(import.meta.url)));
     return;
   }
