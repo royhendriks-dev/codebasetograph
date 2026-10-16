@@ -296,6 +296,8 @@ async function keepOutOfGit(root: string): Promise<void> {
   } catch { /* no git work tree or not writable: nothing to protect */ }
 }
 
+const byCodeUnit = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
 /** `cbtg install git` marks the graph in `.gitattributes`; from then on it is meant to be committed and must not be hidden again. */
 export async function graphIsTracked(root: string): Promise<boolean> {
   const attrs = await fs.readFile(path.join(root, ".gitattributes"), "utf8").catch(() => "");
@@ -308,7 +310,7 @@ export async function graphIsTracked(root: string): Promise<boolean> {
  */
 export function serializeGraph(g: Graph): string {
   const lines = (items: unknown[]) => items.map((i) => JSON.stringify(i)).join(",\n");
-  const files = Object.keys(g.files).sort().map((k) => `${JSON.stringify(k)}:${JSON.stringify(g.files[k])}`).join(",\n");
+  const files = Object.keys(g.files).sort(byCodeUnit).map((k) => `${JSON.stringify(k)}:${JSON.stringify(g.files[k])}`).join(",\n");
   const aliases = g.aliases ? `"aliases":${JSON.stringify(g.aliases)},\n` : "";
   return `{"version":${g.version},"root":${JSON.stringify(g.root)},\n${aliases}"files":{\n${files}\n},\n"nodes":[\n${lines(g.nodes)}\n],\n"edges":[\n${lines(g.edges)}\n],\n"skipped":[\n${lines(g.skipped)}\n]}\n`;
 }
@@ -318,7 +320,7 @@ export async function indexRepo(root: string, graphDir?: string): Promise<{ grap
   root = path.resolve(root);
   const previous = await loadGraph(root, graphDir);
   const { files: found, configs, skipped } = await discover(root);
-  found.sort();
+  found.sort(byCodeUnit);
   const aliases = await loadAliases(root, configs);
   const files: Record<string, FileFacts> = {};
   let parsed = 0, reused = 0;
