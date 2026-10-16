@@ -1,6 +1,7 @@
 import type { Graph } from "./model.js";
 
 export const DEFAULT_MAX_NODES = 400;
+const MAX_SYMBOLS = 40;
 
 /** File-to-file edges only (package nodes are left out), limited to the `max` best connected files. */
 export function graphData(g: Graph, max = DEFAULT_MAX_NODES) {
@@ -12,12 +13,19 @@ export function graphData(g: Graph, max = DEFAULT_MAX_NODES) {
   const unique = new Map<string, (typeof links)[number]>();
   for (const e of links) if (keep.has(e.from) && keep.has(e.to)) unique.set(`${e.from}>${e.to}>${e.evidence}`, e);
   const edges = [...unique.values()];
+  const syms = new Map<string, Array<[string, string, number]>>();
+  for (const n of g.nodes) {
+    if (n.kind !== "symbol" || !n.path || !keep.has(`file:${n.path}`)) continue;
+    const list = syms.get(n.path) ?? [];
+    if (list.length < MAX_SYMBOLS) list.push([n.name, n.detail ?? "", n.lines?.[0] ?? 0]);
+    syms.set(n.path, list);
+  }
   return {
     root: g.root,
     total: Object.keys(g.files).length,
     shown: keep.size,
     connected: connected.length,
-    nodes: [...keep].sort((a, b) => a.localeCompare(b)).map((id) => ({ id: id.slice(5), degree: degree.get(id)!, missing: !g.files[id.slice(5)] })),
+    nodes: [...keep].sort((a, b) => a.localeCompare(b)).map((id) => ({ id: id.slice(5), degree: degree.get(id)!, missing: !g.files[id.slice(5)], syms: (syms.get(id.slice(5)) ?? []).sort((a, b) => a[2] - b[2] || a[0].localeCompare(b[0])) })),
     edges: edges.map((e) => ({ from: e.from.slice(5), to: e.to.slice(5), kind: e.kind, evidence: e.evidence })),
   };
 }
@@ -44,7 +52,7 @@ header input{padding:6px 8px;border:1px solid var(--line);border-radius:6px;back
 </style></head><body>
 <header><input id="q" placeholder="Search files" aria-label="Search"><span id="stat" class="mut"></span>
 <span><i class="k" style="background:var(--ok)"></i>resolved<i class="k" style="background:var(--warn)"></i>inferred<i class="k" style="background:var(--bad)"></i>unresolved</span>
-<span class="mut">colour = top folder · click a file · drag · scroll to zoom</span></header>
+<span class="mut">colour = folder · click a file for links and symbols · drag · scroll to zoom</span></header>
 <div id="wrap"><canvas id="c"></canvas><div id="info"></div></div>
 <script id="data" type="application/json">${json}</script>
 <script>
@@ -52,25 +60,37 @@ const D=JSON.parse(document.getElementById('data').textContent);
 const cv=document.getElementById('c'),ctx=cv.getContext('2d'),info=document.getElementById('info'),q=document.getElementById('q');
 const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const idx=new Map(D.nodes.map((n,i)=>[n.id,i]));
-const folder=p=>p.includes('/')?p.split('/')[0]:'.';
+// cluster = project folder + innermost folder, generic path parts skipped (frontend/src/app/apps/snake/x.ts -> frontend/snake)
+const GENERIC=new Set(['src','main','test','tests','java','kotlin','app','apps','lib','dev','com','org','io','net','resources','dist','packages']);
+const folder=p=>{const d=p.split('/').slice(0,-1),k=d.filter(x=>!GENERIC.has(x));return k.length?(k.length>1?k[0]+'/'+k[k.length-1]:k[0]):(d.pop()||'.')};
 const hue=s=>{let h=0;for(const c of s)h=(h*31+c.charCodeAt(0))%360;return h};
-const N=D.nodes.map((n,i)=>({...n,i,x:Math.cos(i*2.4)*Math.sqrt(i+1)*30,y:Math.sin(i*2.4)*Math.sqrt(i+1)*30,vx:0,vy:0,r:4+Math.min(10,Math.sqrt(n.degree)*1.6),hue:hue(folder(n.id))}));
+const N=D.nodes.map((n,i)=>({...n,i,x:Math.cos(i*2.4)*Math.sqrt(i+1)*30,y:Math.sin(i*2.4)*Math.sqrt(i+1)*30,vx:0,vy:0,r:4+Math.min(10,Math.sqrt(n.degree)*1.6),hue:hue(folder(n.id)),f:folder(n.id)}));
 const E=D.edges.map(e=>({a:idx.get(e.from),b:idx.get(e.to),ev:e.evidence,kind:e.kind}));
 const nb=N.map(()=>new Set());for(const e of E){nb[e.a].add(e.b);nb[e.b].add(e.a)}
-// force layout: repulsion between all pairs, springs along edges, weak pull to the centre
-function layout(iters){
-  for(let t=0;t<iters;t++){
-    const cool=1-t/iters;
-    for(let i=0;i<N.length;i++)for(let j=i+1;j<N.length;j++){
-      let dx=N[i].x-N[j].x,dy=N[i].y-N[j].y,d2=dx*dx+dy*dy+0.01;if(d2>250000)continue;
-      const f=1800/d2,d=Math.sqrt(d2);dx=dx/d*f;dy=dy/d*f;N[i].vx+=dx;N[i].vy+=dy;N[j].vx-=dx;N[j].vy-=dy}
-    for(const e of E){const a=N[e.a],b=N[e.b],dx=b.x-a.x,dy=b.y-a.y,d=Math.sqrt(dx*dx+dy*dy)+0.01,f=(d-70)*0.02;
-      a.vx+=dx/d*f;a.vy+=dy/d*f;b.vx-=dx/d*f;b.vy-=dy/d*f}
-    for(const n of N){n.vx-=n.x*0.004;n.vy-=n.y*0.004;const m=Math.hypot(n.vx,n.vy),cap=12*cool+1;if(m>cap){n.vx*=cap/m;n.vy*=cap/m}
-      n.x+=n.vx;n.y+=n.vy;n.vx*=0.6;n.vy*=0.6}
-  }
+// force layout: repulsion between near pairs (grid cells), springs along edges, pull to the folder centre and the middle.
+// Runs a few iterations per animation frame so the page stays responsive and draws while it settles.
+function step(cool){
+  const grid=new Map(),cen=new Map();
+  for(const n of N){const k=Math.floor(n.x/500)+','+Math.floor(n.y/500);let a=grid.get(k);if(!a)grid.set(k,a=[]);a.push(n);
+    let c=cen.get(n.f);if(!c)cen.set(n.f,c={x:0,y:0,n:0});c.x+=n.x;c.y+=n.y;c.n++}
+  for(const n of N){
+    const cx=Math.floor(n.x/500),cy=Math.floor(n.y/500);
+    for(let gx=cx-1;gx<=cx+1;gx++)for(let gy=cy-1;gy<=cy+1;gy++){const a=grid.get(gx+','+gy);if(!a)continue;
+      for(const m of a){if(m.i<=n.i)continue;
+        let dx=n.x-m.x,dy=n.y-m.y,d2=dx*dx+dy*dy+0.01;if(d2>250000)continue;
+        const f=1800/d2,d=Math.sqrt(d2);dx=dx/d*f;dy=dy/d*f;n.vx+=dx;n.vy+=dy;m.vx-=dx;m.vy-=dy}}}
+  for(const e of E){const a=N[e.a],b=N[e.b],dx=b.x-a.x,dy=b.y-a.y,d=Math.sqrt(dx*dx+dy*dy)+0.01,f=(d-70)*0.02;
+    a.vx+=dx/d*f;a.vy+=dy/d*f;b.vx-=dx/d*f;b.vy-=dy/d*f}
+  for(const n of N){const c=cen.get(n.f);n.vx+=(c.x/c.n-n.x)*0.006-n.x*0.003;n.vy+=(c.y/c.n-n.y)*0.006-n.y*0.003;
+    const m=Math.hypot(n.vx,n.vy),cap=12*cool+1;if(m>cap){n.vx*=cap/m;n.vy*=cap/m}
+    n.x+=n.vx;n.y+=n.vy;n.vx*=0.6;n.vy*=0.6}
 }
-layout(N.length>250?200:300);
+let it=0,touched=false;const TOTAL=N.length>600?160:N.length>250?220:300;
+function tick(){
+  for(let k=0;k<6&&it<TOTAL;k++,it++)step(1-it/TOTAL);
+  if(!touched)fit();draw();
+  if(it<TOTAL)requestAnimationFrame(tick);
+}
 let W=0,H=0,dpr=1,scale=1,ox=0,oy=0,sel=-1,hover=-1,term='',drag=null;
 function fit(){
   if(!N.length)return;
@@ -100,6 +120,12 @@ function draw(){
     const show=n.i===focus||(focus>=0&&nb[focus].has(n.i))||(term&&match(n))||(focus<0&&!term&&(scale>1.4||n.degree>=Math.max(10,N.length/12)));
     if(show)ctx.fillText(n.id.split('/').pop(),n.x*scale+ox+n.r*Math.min(scale,1.6)+3,n.y*scale+oy+4);
   }
+  if(focus<0&&!term){
+    const cen=new Map();for(const n of N){let c=cen.get(n.f);if(!c)cen.set(n.f,c={x:0,y:0,n:0,h:n.hue});c.x+=n.x;c.y+=n.y;c.n++}
+    ctx.font='bold 13px system-ui,sans-serif';ctx.globalAlpha=0.45;
+    for(const[f,c]of cen)if(c.n>=3){const nm=f.split('/').pop();ctx.fillStyle='hsl('+c.h+','+(dark?'60%,70%':'65%,35%')+')';ctx.fillText(nm,c.x/c.n*scale+ox-ctx.measureText(nm).width/2,c.y/c.n*scale+oy)}
+    ctx.globalAlpha=1;ctx.font='11px system-ui,sans-serif';
+  }
   document.getElementById('stat').textContent=D.shown+' of '+D.connected+' linked files'+(D.shown<D.connected?' (truncated, most connected shown)':'')+' · '+D.total+' files indexed';
 }
 function pick(px,py){let best=-1,bd=1e9;for(const n of N){const d=Math.hypot(n.x*scale+ox-px,n.y*scale+oy-py);if(d<n.r*Math.min(scale,1.6)+5&&d<bd){bd=d;best=n.i}}return best}
@@ -109,9 +135,11 @@ function showInfo(){
   const add=(label,e,other)=>{const d=document.createElement('div');d.textContent=label+' '+N[other].id+' · '+e.kind+' · '+e.ev;d.style.color=evCol(e.ev);info.append(d)};
   for(const e of E)if(e.a===sel)add('→',e,e.b);
   for(const e of E)if(e.b===sel)add('←',e,e.a);
+  if(n.syms.length){const t=document.createElement('h3');t.textContent='Symbols';t.style.marginTop='10px';info.append(t);
+    for(const[name,detail,line]of n.syms){const d=document.createElement('div');d.className='mut';d.textContent=(detail?detail+' ':'')+name+(line?' :'+line:'');info.append(d)}}
 }
 const pos=ev=>{const r=cv.getBoundingClientRect();return[ev.clientX-r.left,ev.clientY-r.top]};
-cv.onmousedown=ev=>{const[x,y]=pos(ev),i=pick(x,y);drag={x,y,ox,oy,node:i,moved:false};cv.style.cursor='grabbing'};
+cv.onmousedown=ev=>{touched=true;const[x,y]=pos(ev),i=pick(x,y);drag={x,y,ox,oy,node:i,moved:false};cv.style.cursor='grabbing'};
 window.onmousemove=ev=>{
   const[x,y]=pos(ev);
   if(drag){const dx=x-drag.x,dy=y-drag.y;if(Math.abs(dx)+Math.abs(dy)>3)drag.moved=true;
@@ -119,8 +147,8 @@ window.onmousemove=ev=>{
   const h=pick(x,y);if(h!==hover){hover=h;draw()}
 };
 window.onmouseup=()=>{if(drag&&!drag.moved){sel=drag.node===sel?-1:drag.node;showInfo()}drag=null;cv.style.cursor='grab';draw()};
-cv.onwheel=ev=>{ev.preventDefault();const[x,y]=pos(ev),f=ev.deltaY<0?1.15:1/1.15;ox=x-(x-ox)*f;oy=y-(y-oy)*f;scale*=f;draw()};
+cv.onwheel=ev=>{touched=true;ev.preventDefault();const[x,y]=pos(ev),f=ev.deltaY<0?1.15:1/1.15;ox=x-(x-ox)*f;oy=y-(y-oy)*f;scale*=f;draw()};
 q.oninput=()=>{term=q.value.trim().toLowerCase();draw()};
-window.onresize=resize;resize();
+window.onresize=()=>{touched=false;resize()};resize();requestAnimationFrame(tick);
 </script></body></html>`;
 }
