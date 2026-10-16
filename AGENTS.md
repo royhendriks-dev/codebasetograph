@@ -22,5 +22,5 @@ Rules:
 ## Working on this repository
 
 - `npm test` builds and runs the tests. Only report tests you actually ran.
-- Clean-room: Graphify is a research reference only; do not copy its code.
+- Clean-room: similar tools are a research reference only; do not copy their code.
 - Every PR follows the Jira/Confluence workflow in the README.

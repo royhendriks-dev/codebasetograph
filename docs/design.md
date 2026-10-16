@@ -2,19 +2,18 @@
 
 Status: first slice. Describes what exists in this PR and what is deliberately not built yet.
 
-## Reference research (Graphify)
+## Prior art
 
-Looked at `Graphify-Labs/graphify` at commit `10130e79ed9caf8f60d998073e097531eaa1a395` (shallow clone, 2026-10-15). Only the top-level docs (`README.md`, `ARCHITECTURE.md`), `pyproject.toml`, and licence files were read; no source was copied and **no behaviour was executed or verified**. The statements below are what its documentation says (maintainer claims), not verified results.
+Similar open-source tools were studied through their public documentation only; no source was copied and **no behaviour was executed or verified**. The statements below describe what such tools typically claim (maintainer claims), not verified results.
 
-- Python library plus an agent skill; pipeline `detect → extract → build → cluster → report → export`.
-- Code is parsed with tree-sitter (~40 languages), claimed deterministic and offline; docs/media use an LLM pass.
-- Graph is a NetworkX graph exported as JSON; edges carry a confidence label (`EXTRACTED`/`INFERRED`/`AMBIGUOUS`).
-- Dependencies include networkx, numpy, rapidfuzz, tree-sitter and many grammars. Licence: Apache-2.0 (with retained MIT text for earlier contributions).
-- Its README quotes benchmark and token-saving figures. We do not rely on them; none are verified against our projects.
+- Typical shape: a library plus an agent skill with a pipeline like `detect → extract → build → cluster → report → export`.
+- Code is parsed with tree-sitter, claimed deterministic and offline; docs and media use an LLM pass.
+- The graph is exported as JSON; edges carry a confidence label (extracted / inferred / ambiguous).
+- Such tools quote benchmark and token-saving figures. We do not rely on them; none are verified against our projects.
 
-Open Phase 1 work: read the actual extractor and incremental-cache code, run its tests, and measure on a real repo.
+Open research work: read comparable extractor and incremental-cache designs, run their tests, and measure on a real repo.
 
-## What we took as ideas only
+## Ideas we took
 
 Persistent graph that agents query before reading files; confidence labels on edges; local deterministic parsing. Data model, code and CLI here are independently designed.
 
@@ -85,7 +84,7 @@ Per-file facts are cached by SHA-256 of content. Changed files are re-parsed, de
 
 ## Next steps
 
-1. Phase 1: finish Graphify research with verified experiments.
+1. Phase 1: finish the prior-art research with verified experiments.
 2. Angular DI and router edges.
 3. Benchmark harness: grep-based baseline vs graph context on the same tasks (files read, lines, tokens, missed relevant files).
 4. Real-repo index timing and incremental timing.
