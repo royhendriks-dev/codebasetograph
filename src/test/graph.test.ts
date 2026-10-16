@@ -8,6 +8,7 @@ import * as path from "node:path";
 import * as vm from "node:vm";
 import { indexRepo, loadGraph } from "../build.js";
 import { parseFile } from "../parse.js";
+import { AGENTS_END, AGENTS_START, claudeSkillFile, installAgents, installClaude, nextSteps, removeAgents, removeClaude } from "../install.js";
 import { context, dependents, findSymbols, nameTokens, sharesStem } from "../query.js";
 
 async function fixture(files: Record<string, string>): Promise<string> {
@@ -482,4 +483,33 @@ test("index: the default graph directory is excluded from git locally, once", as
   const kept = await fixture({ "src/a.ts": "export const a = 1;\n", ".git/HEAD": "ref: refs/heads/main\n" });
   await indexRepo(kept, path.join(kept, "..", "elsewhere-graph"));
   await assert.rejects(fs.readFile(path.join(kept, ".git", "info", "exclude"), "utf8"), "a graph kept elsewhere touches nothing in the repo");
+});
+
+test("install: skill for Claude Code, managed block in AGENTS.md, both reversible and idempotent", async () => {
+  const home = await fixture({ "x": "" });
+  const root = await fixture({ "AGENTS.md": "# Mine\n\nKeep this.\n" });
+  assert.equal((await installClaude("user", root, home)).action, "created");
+  assert.equal((await installClaude("user", root, home)).action, "unchanged");
+  assert.match(await fs.readFile(claudeSkillFile("user", root, home), "utf8"), /^---\nname: codebasetograph/);
+  assert.equal(claudeSkillFile("project", root, home), path.join(root, ".claude", "skills", "codebasetograph", "SKILL.md"));
+  assert.equal((await removeClaude("user", root, home)).action, "removed");
+  assert.equal((await removeClaude("user", root, home)).action, "absent");
+
+  assert.equal((await installAgents(root)).action, "updated");
+  assert.equal((await installAgents(root)).action, "unchanged");
+  let text = await fs.readFile(path.join(root, "AGENTS.md"), "utf8");
+  assert.ok(text.startsWith("# Mine\n\nKeep this.\n") && text.includes(AGENTS_START) && text.includes(AGENTS_END));
+  await fs.writeFile(path.join(root, "AGENTS.md"), text.replace("Use the code graph", "Old heading"));
+  assert.equal((await installAgents(root)).action, "updated", "a changed block is refreshed");
+  text = await fs.readFile(path.join(root, "AGENTS.md"), "utf8");
+  assert.equal(text.split(AGENTS_START).length, 2, "never two blocks");
+  assert.equal((await removeAgents(root)).action, "removed");
+  assert.equal(await fs.readFile(path.join(root, "AGENTS.md"), "utf8"), "# Mine\n\nKeep this.\n");
+  assert.equal((await removeAgents(root)).action, "absent");
+
+  const fresh = await fixture({ "x": "" });
+  assert.equal((await installAgents(fresh)).action, "created");
+  assert.equal((await removeAgents(fresh)).action, "removed");
+  await assert.rejects(fs.stat(path.join(fresh, "AGENTS.md")), "a file that only held the block is deleted");
+  assert.match(nextSteps("/opt/cbtg/dist/cli.js"), /claude mcp add cbtg -- node \/opt\/cbtg\/dist\/cli\.js mcp/);
 });

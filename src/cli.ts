@@ -9,6 +9,8 @@ import { handleLine, hookOutput } from "./agent.js";
 import { createInterface } from "node:readline";
 import { loadSynonyms } from "./words.js";
 import { loadTasks, renderReport, runBenchmark } from "./bench.js";
+import { installAgents, installClaude, nextSteps, removeAgents, removeClaude, type Scope } from "./install.js";
+import { fileURLToPath } from "node:url";
 import { context, dependencies, dependents, explain, findSymbols, related, resolveTarget, shortestPath } from "./query.js";
 
 const [cmd, ...rest] = process.argv.slice(2);
@@ -29,6 +31,7 @@ const usage = `cbtg <command> [--root dir] [--graph-dir dir]   (--graph-dir keep
   view [--out file]           write a self-contained HTML explorer (default .cbtg/graph.html)
   view --graph [--max-nodes n] [--out file]   drawn file graph (default .cbtg/graph-map.html, 400 nodes)
   bench <tasks.json> [--files n] [--budget tokens] [--synonyms file.json]   compare grep baseline with graph context on tasks with known relevant files
+  install claude|agents [--scope user|project] [--remove]   install the skill for Claude Code (~/.claude/skills or <root>/.claude/skills), or a marked block in <root>/AGENTS.md for other agents
   mcp                         MCP server over stdio (tools: cbtg_context, cbtg_find, cbtg_deps, cbtg_dependents, cbtg_related, cbtg_explain, cbtg_path)
   hook                        Claude Code UserPromptSubmit hook: reads the hook JSON on stdin, prints task context for the prompt (nothing if there is no graph)
   context "<task>" [--budget tokens] [--synonyms file.json]   pointer list of task-relevant code (Dutch words are mapped to English; the optional file adds your own, {"inloggen":["login"]})`;
@@ -37,6 +40,16 @@ async function main() {
   if (cmd === "index") {
     const { stats, graph } = await indexRepo(root, graphDir);
     console.log(`indexed ${stats.files} files (parsed ${stats.parsed}, reused ${stats.reused}, removed ${stats.removed}); ${graph.nodes.length} nodes, ${graph.edges.length} edges, ${graph.skipped.length} skipped`);
+    return;
+  }
+  if (cmd === "install") {
+    const target = positional[0];
+    const scope = (flag("scope") ?? "user") as Scope;
+    if ((target !== "claude" && target !== "agents") || (scope !== "user" && scope !== "project")) { console.error("usage: cbtg install claude|agents [--scope user|project] [--remove]"); process.exit(2); }
+    const remove = rest.includes("--remove");
+    const r = target === "claude" ? await (remove ? removeClaude : installClaude)(scope, root) : await (remove ? removeAgents : installAgents)(root);
+    console.log(`${r.target}: ${r.action} ${r.file}`);
+    if (!remove) console.log(nextSteps(fileURLToPath(import.meta.url)));
     return;
   }
   if (cmd === "watch") {
