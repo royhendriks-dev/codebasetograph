@@ -37,7 +37,7 @@ node dist/cli.js index --root <repo> --graph-dir <other dir>
 npm test
 ```
 
-Agents: see [AGENTS.md](AGENTS.md) and [skills/codebasetograph/SKILL.md](skills/codebasetograph/SKILL.md). The instructions are provider-neutral.
+Agents: see [AGENTS.md](AGENTS.md) and [skills/codebasetograph/SKILL.md](skills/codebasetograph/SKILL.md). The instructions are provider-neutral; to use the tool in another project see [Install as a skill](#install-as-a-skill).
 
 ## Workflow
 
@@ -49,6 +49,18 @@ Every pull request in this repository follows the same checklist:
 4. **Keep them in sync.** Create the ticket and page in the same session as the PR; update both when the PR merges (status Done, merge date).
 
 Jira tickets and Confluence pages are written in Dutch, in the same format as the portfolio-website tickets, and end with "Geschreven door: <model>, via Claude Code, op <date>". The README is written in English.
+
+## Install as a skill
+
+```
+git clone <this repo> ~/tools/codebasetograph && cd ~/tools/codebasetograph && npm install && npm run build && npm link   # `cbtg` on your PATH
+cbtg install claude                    # Claude Code, all projects: ~/.claude/skills/codebasetograph/SKILL.md
+cbtg install claude --scope project    # Claude Code, this repository only: <root>/.claude/skills/...
+cbtg install agents --root <project>   # any agent that reads AGENTS.md (Copilot, Codex, ...): a marked block in <root>/AGENTS.md
+cbtg install claude --remove           # undo (same flags); text outside the marked block in AGENTS.md is never touched
+```
+
+Then, in each project, `cbtg index` once (add `cbtg watch` to keep it fresh). `install` only writes the skill file or the marked block; the MCP server and the prompt hook are optional and are printed as commands, never applied for you. The skill text itself is plain Markdown with no Claude-specific syntax beyond the front matter, so any harness that can run shell commands (or MCP) can use it: put `skills/codebasetograph/SKILL.md` where that harness reads instructions, or use the AGENTS.md block. The tool is not published to npm yet.
 
 ## What the graph contains
 

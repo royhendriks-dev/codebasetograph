@@ -7,13 +7,15 @@ description: Query a local code knowledge graph (symbols, imports, evidence leve
 
 The graph is a JSON file (`.cbtg/graph.json`) built locally from the repository. It answers "where is it, what depends on it, what should I read" without opening files. It is a map, not the source: **open the real file before you edit or quote it.**
 
-## Setup (once per project)
+## Setup
+
+Once per machine (the tool is not published to npm yet; `cbtg install claude` or `cbtg install agents` puts these instructions where your agent reads them):
 
 ```
-git clone <codebasetograph repo> ~/tools/codebasetograph && cd ~/tools/codebasetograph && npm install && npm run build
-alias cbtg="node ~/tools/codebasetograph/dist/cli.js"
-cbtg index --root <project>      # re-run after changes; only changed files are re-parsed
+git clone <codebasetograph repo> ~/tools/codebasetograph && cd ~/tools/codebasetograph && npm install && npm run build && npm link   # puts `cbtg` on PATH
 ```
+
+Per project: `cbtg index` (from the project root, or `--root <project>`). Re-run after changes; only changed files are re-parsed. `.cbtg/` is kept out of git; `--graph-dir <dir>` keeps the graph outside the repository altogether. Without `npm link`, replace `cbtg` by `node ~/tools/codebasetograph/dist/cli.js`.
 
 ## Workflow
 
