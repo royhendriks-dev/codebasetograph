@@ -70,7 +70,7 @@ export async function handleRpc(msg: Rpc, root: string, graphDir?: string): Prom
   if (msg.id === undefined) return undefined; // notification
   switch (msg.method) {
     case "initialize":
-      return ok(msg.id, { protocolVersion: typeof msg.params?.protocolVersion === "string" ? msg.params.protocolVersion : "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "codebasetograph", version: "0.0.1" } });
+      return ok(msg.id, { protocolVersion: typeof msg.params?.protocolVersion === "string" ? msg.params.protocolVersion : "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "codebasetograph", version: "1.0.0" } });
     case "ping": return ok(msg.id, {});
     case "tools/list":
       return ok(msg.id, { tools: TOOLS.map((t) => ({ name: t.name, description: t.description, inputSchema: { type: "object", properties: t.properties, required: t.required } })) });
