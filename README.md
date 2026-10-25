@@ -39,12 +39,20 @@ npm test
 
 Agents: see [AGENTS.md](AGENTS.md) and [skills/codebasetograph/SKILL.md](skills/codebasetograph/SKILL.md). The instructions are provider-neutral; to use the tool in another project see [Install as a skill](#install-as-a-skill).
 
+## Branches and releases
+
+- `develop` is where work lands: every feature or bugfix goes in a pull request with base `develop` and is merged there once CI and SonarCloud are green.
+- `main` only contains released code. A release is a pull request `develop` -> `main`, reviewed by the owner. That PR raises `version` in `package.json` (semver) and adds a `## [x.y.z]` section to [CHANGELOG.md](CHANGELOG.md).
+- After the merge, run the workflow **Release** (Actions > Release > Run workflow, branch `main`, enter the version without `v`). It checks that `package.json` and the changelog match, that CI is green on that commit and that the tag does not exist yet, then creates tag `vX.Y.Z` and a GitHub Release with the changelog section as release notes. Pushing a tag by hand is not needed.
+- Urgent fixes may use `hotfix/<name>` -> `main`, followed by a merge of `main` back into `develop`.
+- Current version: 1.0.0 (see [CHANGELOG.md](CHANGELOG.md)).
+
 ## Workflow
 
 Every pull request in this repository follows the same checklist:
 
 1. **Jira ticket** on the *PRW board* (project Portfolio Website, `roy-portfolio.atlassian.net`). The summary starts with `CDTG - ` to mark it as codebasetograph work. Write it as a story: user story, what was done, acceptance criteria, instructions for AI, links.
-2. **Branch and PR** from the ticket. The PR description links the Jira ticket and the Confluence page.
+2. **Branch and PR** from the ticket, with base `develop` (see [Branches and releases](#branches-and-releases)). The PR description links the Jira ticket and the Confluence page.
 3. **Confluence page** per PR in the *Portfolio Website* space, folder `codebasetograph` > `Tickets`, titled `PRW-<n> CDTG - <summary>`. It records the Jira key, the PR number and status, what changed and why.
 4. **Keep them in sync.** Create the ticket and page in the same session as the PR; update both when the PR merges (status Done, merge date).
 

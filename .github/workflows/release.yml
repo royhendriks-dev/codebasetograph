@@ -1,0 +1,40 @@
+name: Release
+
+# Handmatig starten op main met een versienummer (bijv. 1.0.0). Maakt de tag v<versie> en een GitHub Release.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Versie zonder v (bijv. 1.0.0)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Controleren
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then echo "Alleen vanaf main releasen." >&2; exit 1; fi
+          if ! [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "Versie moet x.y.z zijn." >&2; exit 1; fi
+          if [ "$(node -p "require('./package.json').version")" != "${VERSION}" ]; then echo "package.json heeft een andere versie dan ${VERSION}." >&2; exit 1; fi
+          if ! grep -q "^## \[${VERSION}\]" CHANGELOG.md; then echo "CHANGELOG.md mist een kopje voor ${VERSION}." >&2; exit 1; fi
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/v${VERSION}" >/dev/null 2>&1; then echo "Tag v${VERSION} bestaat al." >&2; exit 1; fi
+          ci=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${GITHUB_SHA}&status=completed" --jq '[.workflow_runs[] | select(.conclusion=="success")] | length')
+          if [ "${ci}" = "0" ]; then echo "CI is niet groen voor ${GITHUB_SHA}." >&2; exit 1; fi
+      - name: Releasetekst uit CHANGELOG halen
+        env:
+          VERSION: ${{ inputs.version }}
+        run: awk -v v="${VERSION}" '$0 ~ "^## \\[" v "\\]" {f=1; next} /^## \[/ {f=0} f' CHANGELOG.md > "${RUNNER_TEMP}/notes.md"
+      - name: Tag en GitHub Release maken
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "v${VERSION}" --repo "${GITHUB_REPOSITORY}" --target "${GITHUB_SHA}" --title "v${VERSION}" --notes-file "${RUNNER_TEMP}/notes.md"

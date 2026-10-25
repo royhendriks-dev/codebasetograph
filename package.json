@@ -1,6 +1,6 @@
 {
   "name": "codebasetograph",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "description": "Local-first, provider-independent code knowledge graph for coding agents",
   "type": "module",
   "private": true,
