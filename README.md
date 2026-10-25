@@ -22,7 +22,7 @@ Similar tools were studied as research reference only. Their general ideas infor
 
 ## Status
 
-Early stage. A minimal TypeScript core exists (discovery, TS/JS and Java import and declaration extraction, JSON graph, queries, CLI). See [docs/design.md](docs/design.md) for scope and known limits. Prior-art research (Phase 1) is only partially done.
+Version 1.0.0 (see [CHANGELOG.md](CHANGELOG.md)). A TypeScript core exists (discovery, TS/JS and Java import and declaration extraction, JSON graph, queries, CLI). Branches: `main` (releases) and `develop` (work). See [docs/design.md](docs/design.md) for scope and known limits. Prior-art research (Phase 1) is only partially done.
 
 ## Quick start
 
@@ -89,7 +89,7 @@ git add .cbtg/graph.json .cbtg/.gitignore .gitattributes AGENTS.md .github/workf
 - `.cbtg/.gitignore` keeps the HTML views and temp files out; only `graph.json` is committed.
 - The workflow `.github/workflows/cbtg-index.yml` runs `cbtg index` on every pull request from the same repository and commits a changed graph to the PR branch. Pull requests from forks and from Dependabot (read-only token) are not pushed to; there an agent runs `cbtg index` itself (it only re-parses changed files). A push with the default `GITHUB_TOKEN` does not start CI on the bot's commit (the runs wait for "Approve and run"); to make CI run, create a fine-grained token with *Contents: Read and write* on that repository only and store it as the repository secret `CBTG_PUSH_TOKEN`. Without the secret the workflow falls back to the default token. It clones cbtg from `--cbtg-repo` (default this repository) at `--cbtg-ref` (default `main`): pin a commit SHA there for a repository you care about, because that code runs with write access to the PR branch.
 - `cbtg install git --remove` undoes it (it does not delete the committed graph). The privacy note below still applies: the graph lists paths and names, so commit it only where the source is already as visible.
-- Not yet run on a real GitHub Actions runner; the same steps were run locally (one added file changed seven graph lines).
+- The workflow also runs on GitHub Actions runners (for example in the portfolio repository); the same steps were first run locally (one added file changed seven graph lines).
 
 ## Keeping the graph fresh
 
