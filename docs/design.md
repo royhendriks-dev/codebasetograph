@@ -25,7 +25,7 @@ discover -> parse (per file) -> link (all files) -> graph.json -> query -> CLI /
 
 | Module | Responsibility |
 |---|---|
-| `discover.ts` | Walk repo, default exclusions, simple `.gitignore`, skip `.d.ts`/minified/large files, no symlinks |
+| `discover.ts` | Walk repo, default exclusions, `.gitignore` (nested files, negation, `*`/`?`/`**`, last rule wins), skip `.d.ts`/minified/large files, no symlinks |
 | `parse.ts` | TypeScript compiler API (parse only, nothing executed): imports, re-exports, `require`, dynamic `import('literal')`, top-level declarations, Angular decorator roles and selectors |
 | `build.ts` | Per-file cache by content hash, linking, atomic write of `.cbtg/graph.json` |
 | `query.ts` | find, deps, dependents, bounded related walk, budgeted task context |
@@ -81,7 +81,7 @@ Per-file facts are cached by SHA-256 of content. Changed files are re-parsed, de
 
 - TypeScript: file-level imports and top-level declarations only: no call graph, no member-level symbols, duplicate names in one file collapse to one node. Java: see above.
 - No package `exports`, monorepo workspace package names, or Angular DI/router edges. Imports that no tsconfig rule covers show as `inferred` packages.
-- `.gitignore` support is partial (no negation, no nested files).
+- `.gitignore` support covers the common syntax (nested files, `!negation`, `*`, `?`, `**`, anchoring) but not character classes (`[ab]`), `.git/info/exclude` or the global git ignore file.
 - Context ranking is plain name matching. It is a baseline to measure against, not a claim of quality.
 - Only tests in `src/test` were run, on small synthetic fixtures. **No larger real-world repository and no token benchmark has been run yet.**
 
