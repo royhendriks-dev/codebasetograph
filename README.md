@@ -32,6 +32,7 @@ node dist/cli.js index --root <repo>
 node dist/cli.js context "what you are changing" --root <repo>
 node dist/cli.js view --root <repo>   # writes .cbtg/graph.html, open it in a browser
 node dist/cli.js view --graph --root <repo>   # drawn graph: .cbtg/graph-map.html (--max-nodes n)
+node dist/cli.js view --overview --root <repo>   # folder summary without file or symbol names: .cbtg/overview.json + GRAPH.md (Mermaid)
 # read-only repo: keep the graph elsewhere, the repo itself is never written to
 node dist/cli.js index --root <repo> --graph-dir <other dir>
 # measure it on your own history: each past commit is a task, searched in the state before it
@@ -81,7 +82,7 @@ Then, in each project, `cbtg index` once (add `cbtg watch` to keep it fresh). `i
 Works for any harness (Claude Code, Copilot, Codex, local LLMs), because it needs no skill support: the graph is a file in the repository and `AGENTS.md` says how to query it.
 
 ```
-cbtg install git            # in the project root
+cbtg install git [--views-branch develop]   # in the project root
 cbtg index
 git add .cbtg/graph.json .cbtg/.gitignore .gitattributes AGENTS.md .github/workflows/cbtg-index.yml && git commit
 ```
@@ -90,6 +91,8 @@ git add .cbtg/graph.json .cbtg/.gitignore .gitattributes AGENTS.md .github/workf
 - `.gitattributes` marks it `linguist-generated` (collapsed in GitHub's PR view) and `merge=binary`, so a conflict never leaves broken JSON: keep either side and run `cbtg index`.
 - `.cbtg/.gitignore` keeps the HTML views and temp files out; only `graph.json` is committed.
 - The workflow `.github/workflows/cbtg-index.yml` runs `cbtg index` on every pull request from the same repository and commits a changed graph to the PR branch. Pull requests from forks and from Dependabot (read-only token) are not pushed to; there an agent runs `cbtg index` itself (it only re-parses changed files). A push with the default `GITHUB_TOKEN` does not start CI on the bot's commit (the runs wait for "Approve and run"); to make CI run, create a fine-grained token with *Contents: Read and write* on that repository only and store it as the repository secret `CBTG_PUSH_TOKEN`. Without the secret the workflow falls back to the default token. It clones cbtg from `--cbtg-repo` (default this repository) at `--cbtg-ref` (default `main`): pin a commit SHA there for a repository you care about, because that code runs with write access to the PR branch.
+- **Views after a merge.** On a push to the views branch (`--views-branch`, default `main`; for a `develop`/`main` flow use `--views-branch develop`, `main` then gets them through the release pull request) the same workflow also writes `.cbtg/GRAPH.md` (Mermaid diagram of the top-level folders, which GitHub draws), `.cbtg/overview.json`, `.cbtg/graph.html` and `.cbtg/graph-map.html`, and commits them in one commit on that branch. Pull requests only update `graph.json`, so they carry no large view diffs. Pushing to the views branch must be allowed for the workflow's token; with a ruleset that requires pull requests on that branch, add the bot to the bypass list or leave the views out.
+- `overview.json` and `GRAPH.md` hold only top-level folder names and counts: no file, symbol, route, table, config-key or Kubernetes object names. They are meant to be shown outside the repository (for example on a website). The HTML views and `graph.json` contain all names and are as private as the repository.
 - `cbtg install git --remove` undoes it (it does not delete the committed graph). The privacy note below still applies: the graph lists paths and names, so commit it only where the source is already as visible.
 - The workflow also runs on GitHub Actions runners (for example in the portfolio repository); the same steps were first run locally (one added file changed seven graph lines).
 

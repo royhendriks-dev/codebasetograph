@@ -534,9 +534,10 @@ test("install git: graph committed, attributes + workflow + AGENTS block, idempo
   assert.equal(await fs.readFile(path.join(root, ".git", "info", "exclude"), "utf8"), "# local\n", "no longer hidden");
   const attrs = await fs.readFile(path.join(root, ".gitattributes"), "utf8");
   assert.ok(attrs.startsWith("*.png binary\n") && attrs.includes(".cbtg/graph.json linguist-generated=true merge=binary"));
-  assert.equal(await fs.readFile(path.join(root, ".cbtg", ".gitignore"), "utf8"), "*\n!.gitignore\n!graph.json\n");
+  assert.equal(await fs.readFile(path.join(root, ".cbtg", ".gitignore"), "utf8"), "*\n!.gitignore\n!graph.json\n!graph.html\n!graph-map.html\n!overview.json\n!GRAPH.md\n");
   const wf = await fs.readFile(path.join(root, WORKFLOW_FILE), "utf8");
-  assert.ok(wf.includes("CBTG_REPO: https://example.com/cbtg.git") && wf.includes("CBTG_REF: v1") && wf.includes("${{ github.event.pull_request.head.ref }}"));
+  assert.ok(wf.includes("CBTG_REPO: https://example.com/cbtg.git") && wf.includes("CBTG_REF: v1") && wf.includes("${{ github.event.pull_request.head.ref || github.ref_name }}"));
+  assert.ok(wf.includes("push:\n    branches: [main]") && wf.includes("view --overview"), "views after a merge to the default views branch");
   assert.ok(wf.includes('fetch -q --depth 1 "$CBTG_REPO" "$CBTG_REF"') && !wf.includes("--branch"), "a commit SHA must work as ref: git clone --branch only takes branch or tag names");
   await indexRepo(root);
   assert.equal(await fs.readFile(path.join(root, ".git", "info", "exclude"), "utf8"), "# local\n", "index respects a tracked graph");

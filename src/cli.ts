@@ -3,6 +3,7 @@ import { graphDirOf, indexRepo, loadGraph } from "./build.js";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { renderHtml } from "./view.js";
+import { overview, renderOverviewMarkdown } from "./overview.js";
 import { renderGraphHtml, DEFAULT_MAX_NODES } from "./viewGraph.js";
 import { watchRepo } from "./watch.js";
 import { handleLine, hookOutput } from "./agent.js";
@@ -30,9 +31,10 @@ const usage = `cbtg <command> [--root dir] [--graph-dir dir]   (--graph-dir keep
   path <from> <to>            shortest chain of resolved links between two files or symbols
   view [--out file]           write a self-contained HTML explorer (default .cbtg/graph.html)
   view --graph [--max-nodes n] [--out file]   drawn file graph (default .cbtg/graph-map.html, 400 nodes)
+  view --overview [--out dir]  folder-level summary without file or symbol names: overview.json and GRAPH.md (Mermaid), default in .cbtg/
   bench <tasks.json> [--files n] [--budget tokens] [--synonyms file.json]   compare grep baseline with graph context on tasks with known relevant files
   bench --from-git [--ref ref] [--tasks n] [--files n] [--budget tokens] [--no-history]   same, with tasks from the git history: each commit is searched in the state before it
-  install git [--cbtg-repo url] [--cbtg-ref ref] [--remove]   commit the graph: .gitattributes, AGENTS.md block, GitHub workflow that refreshes it on every PR
+  install git [--cbtg-repo url] [--cbtg-ref ref] [--views-branch branch] [--remove]   commit the graph: .gitattributes, AGENTS.md block, GitHub workflow that refreshes it on every PR and the views after every merge to the branch (default main)
   install claude|agents [--scope user|project] [--remove]   install the skill for Claude Code (~/.claude/skills or <root>/.claude/skills), or a marked block in <root>/AGENTS.md for other agents
   mcp                         MCP server over stdio (tools: cbtg_context, cbtg_find, cbtg_deps, cbtg_dependents, cbtg_related, cbtg_explain, cbtg_path)
   hook                        Claude Code UserPromptSubmit hook: reads the hook JSON on stdin, prints task context for the prompt (nothing if there is no graph)
@@ -49,7 +51,7 @@ async function main() {
     const scope = (flag("scope") ?? "user") as Scope;
     if ((target !== "claude" && target !== "agents" && target !== "git") || (scope !== "user" && scope !== "project")) { console.error("usage: cbtg install claude|agents|git [--scope user|project] [--remove] [--cbtg-repo url] [--cbtg-ref ref]"); process.exit(2); }
     const remove = rest.includes("--remove");
-    const results = target === "git" ? await (remove ? removeGit(root) : installGit(root, { repo: flag("cbtg-repo"), ref: flag("cbtg-ref") }))
+    const results = target === "git" ? await (remove ? removeGit(root) : installGit(root, { repo: flag("cbtg-repo"), ref: flag("cbtg-ref"), viewsBranch: flag("views-branch") }))
       : [target === "claude" ? await (remove ? removeClaude : installClaude)(scope, root) : await (remove ? removeAgents : installAgents)(root)];
     for (const r of results) console.log(`${r.target}: ${r.action} ${r.file}`);
     if (!remove && target === "git") console.log("Now run `cbtg index` and commit .cbtg/graph.json, .cbtg/.gitignore, .gitattributes, AGENTS.md and the workflow.");
@@ -117,6 +119,15 @@ async function main() {
       break;
     }
     case "view": {
+      if (rest.includes("--overview")) {
+        const dir = path.resolve(flag("out") ?? graphDirOf(root, graphDir));
+        const o = overview(g);
+        await fs.mkdir(dir, { recursive: true });
+        await fs.writeFile(path.join(dir, "overview.json"), JSON.stringify(o, null, 1) + "\n");
+        await fs.writeFile(path.join(dir, "GRAPH.md"), renderOverviewMarkdown(o));
+        console.log(`wrote ${path.join(dir, "overview.json")} and ${path.join(dir, "GRAPH.md")}`);
+        break;
+      }
       const map = process.argv.includes("--graph");
       const out = path.resolve(flag("out") ?? path.join(graphDirOf(root, graphDir), map ? "graph-map.html" : "graph.html"));
       const max = Number(flag("max-nodes") ?? DEFAULT_MAX_NODES);
