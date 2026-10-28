@@ -39,6 +39,10 @@ npm test
 
 Agents: see [AGENTS.md](AGENTS.md) and [skills/codebasetograph/SKILL.md](skills/codebasetograph/SKILL.md). The instructions are provider-neutral; to use the tool in another project see [Install as a skill](#install-as-a-skill).
 
+## npm package (prepared, not published)
+
+`package.json` is ready for `npm publish`: `files` limits the tarball to `dist/` (without the tests), `lang/`, `skills/`, the README and the changelog, `prepack` builds first, and a test checks the tarball content (`npm pack --dry-run`). The package is still `"private": true`, so a publish is refused until the owner decides. To publish: choose a license and add a `license` field and `LICENSE` file, remove `"private": true`, and run `npm publish` after a release on `main` (use `npm publish --provenance` from CI or `--access public` for a scoped name). Until then `git clone` plus `npm install && npm run build && npm link` is the way to install.
+
 ## Task language
 
 `context` and `bench` match the words of your task against file and symbol names. Tasks are often written in another language than the code, so cbtg maps task words with a language pack (stop words plus a small glossary). The word lists are data, not code: the built-in Dutch pack is [lang/nl.json](lang/nl.json) and stays the default, so nothing changes for existing users.

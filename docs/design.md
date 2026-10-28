@@ -82,6 +82,7 @@ Per-file facts are cached by SHA-256 of content. Changed files are re-parsed, de
 - TypeScript: file-level imports and top-level declarations only: no call graph, no member-level symbols, duplicate names in one file collapse to one node. Java: see above.
 - No package `exports`, monorepo workspace package names, or Angular DI/router edges. Imports that no tsconfig rule covers show as `inferred` packages.
 - `.gitignore` support covers the common syntax (nested files, `!negation`, `*`, `?`, `**`, anchoring) but not character classes (`[ab]`), `.git/info/exclude` or the global git ignore file.
+- Not on npm yet: the tarball is prepared (`files`, `prepack`, test) but `private: true` stays until a license is chosen.
 - Context ranking is plain name matching. It is a baseline to measure against, not a claim of quality.
 - Only tests in `src/test` were run, on small synthetic fixtures. **No larger real-world repository and no token benchmark has been run yet.**
 
