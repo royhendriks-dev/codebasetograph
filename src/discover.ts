@@ -11,26 +11,42 @@ const ENV_TEMPLATE = /^\.env(\.[\w-]+)?\.(example|sample|template)$/;
 const isIndexable = (name: string) => EXTS.has(path.extname(name)) || /^(package\.json|pom\.xml)$/.test(name) || /^Dockerfile(\.[\w.-]+)?$/.test(name) || ENV_TEMPLATE.test(name);
 const MAX_BYTES = 1_000_000;
 
-/** Minimal .gitignore support: plain names, `dir/`, `*.ext`, `/anchored`. Negation is not supported. */
-function compileIgnore(lines: string[]): (rel: string, isDir: boolean) => boolean {
+/** Result of one rule file for a path: true = ignored, false = re-included by `!rule`, undefined = no rule matches. */
+type IgnoreMatcher = (rel: string, isDir: boolean) => boolean | undefined;
+
+const globToRegex = (body: string) =>
+  new RegExp(
+    "^" + body
+      .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+      .replace(/\*\*\//g, "\u0001").replace(/\/\*\*$/, "/\u0002").replace(/\*\*/g, "\u0000")
+      .replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]")
+      .replace(/\u0001/g, "(?:.*/)?").replace(/\u0002/g, ".*").replace(/\u0000/g, ".*") + "$",
+  );
+
+/**
+ * .gitignore support for one file: plain names, `dir/`, `*`, `?`, `**`, `/anchored`, `a/b` (anchored) and `!negation`.
+ * Like git, the last matching rule wins. Paths are relative to the directory that holds the .gitignore.
+ */
+function compileIgnore(lines: string[]): IgnoreMatcher {
   const rules = lines
-    .map((l) => l.trim())
-    .filter((l) => l && !l.startsWith("#") && !l.startsWith("!"))
-    .map((l) => {
+    .map((l) => l.replace(/\s+$/, ""))
+    .filter((l) => l && !l.startsWith("#"))
+    .map((raw) => {
+      const negated = raw.startsWith("!");
+      const l = negated || raw.startsWith("\\!") || raw.startsWith("\\#") ? raw.slice(1) : raw;
       const dirOnly = l.endsWith("/");
       const anchored = l.startsWith("/") || l.slice(0, -1).includes("/");
       const body = l.replace(/^\//, "").replace(/\/$/, "");
-      const re = new RegExp(
-        "^" + body.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "\u0000").replace(/\*/g, "[^/]*").replace(/\u0000/g, ".*") + "$",
-      );
-      return { dirOnly, anchored, re };
+      return { negated, dirOnly, anchored, re: globToRegex(body) };
     });
-  return (rel, isDir) =>
-    rules.some((r) => {
-      if (r.dirOnly && !isDir) return false;
-      if (r.anchored) return r.re.test(rel);
-      return r.re.test(path.posix.basename(rel));
-    });
+  return (rel, isDir) => {
+    let result: boolean | undefined;
+    for (const r of rules) {
+      if (r.dirOnly && !isDir) continue;
+      if (r.re.test(r.anchored ? rel : path.posix.basename(rel))) result = !r.negated;
+    }
+    return result;
+  };
 }
 
 export interface Discovered {
@@ -42,26 +58,37 @@ export interface Discovered {
 
 /** Walks `root`, returns repo-relative posix paths of indexable source files. Never follows symlinks. */
 export async function discover(root: string): Promise<Discovered> {
-  let ignored: (rel: string, isDir: boolean) => boolean = () => false;
-  try {
-    ignored = compileIgnore((await fs.readFile(path.join(root, ".gitignore"), "utf8")).split(/\r?\n/));
-  } catch { /* no .gitignore */ }
+  /** The .gitignore files met on the way down, each with the directory it lives in. */
+  type Scope = { dir: string; match: IgnoreMatcher };
+  const readScope = async (dir: string): Promise<Scope | undefined> => {
+    try {
+      return { dir, match: compileIgnore((await fs.readFile(path.join(root, dir, ".gitignore"), "utf8")).split(/\r?\n/)) };
+    } catch { return undefined; /* no .gitignore here */ }
+  };
+  /** A deeper .gitignore overrides a shallower one; inside a file the last rule wins. */
+  const isIgnored = (scopes: Scope[], rel: string, isDir: boolean) => {
+    let result = false;
+    for (const sc of scopes) result = sc.match(sc.dir ? rel.slice(sc.dir.length + 1) : rel, isDir) ?? result;
+    return result;
+  };
 
   const files: string[] = [];
   const configs: string[] = [];
   const skipped: Discovered["skipped"] = [];
 
-  async function walk(dir: string): Promise<void> {
+  async function walk(dir: string, parents: Scope[]): Promise<void> {
+    const own = dir ? await readScope(dir) : undefined;
+    const scopes = own ? [...parents, own] : parents;
     const entries = await fs.readdir(path.join(root, dir), { withFileTypes: true });
     entries.sort((a, b) => a.name.localeCompare(b.name));
     for (const e of entries) {
       const rel = dir ? `${dir}/${e.name}` : e.name;
       if (e.isSymbolicLink()) continue;
       if (e.isDirectory()) {
-        if (DEFAULT_IGNORED_DIRS.has(e.name) || ignored(rel, true)) continue;
-        await walk(rel);
+        if (DEFAULT_IGNORED_DIRS.has(e.name) || isIgnored(scopes, rel, true)) continue;
+        await walk(rel, scopes);
       } else if (e.isFile()) {
-        if (ignored(rel, false)) continue;
+        if (isIgnored(scopes, rel, false)) continue;
         if (/^(tsconfig(\.[\w.-]+)?|jsconfig)\.json$/.test(e.name)) { configs.push(rel); continue; }
         if (!isIndexable(e.name)) continue;
         if (/\.d\.[cm]?ts$/.test(e.name) || /\.min\.[cm]?js$/.test(e.name)) {
@@ -77,6 +104,7 @@ export async function discover(root: string): Promise<Discovered> {
       }
     }
   }
-  await walk("");
+  const rootScope = await readScope("");
+  await walk("", rootScope ? [rootScope] : []);
   return { files, configs, skipped };
 }
