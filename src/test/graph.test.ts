@@ -35,11 +35,12 @@ const angular = {
 
 test("discover: .gitignore negation, nested files, ?, ** and last rule wins", async () => {
   const root = await fixture({
-    ".gitignore": `# comment\n*.gen.ts\n!keep.gen.ts\nlogs/\n/rootonly.ts\n**/deep/*.ts\nfile?.ts\n\\#hash.ts\n`,
+    ".gitignore": `# comment\n*.gen.ts\n!keep.gen.ts\nlogs/\n/rootonly.ts\n**/deep/*.ts\nfile?.ts\n\\#hash.ts\ngen/**\nx**y.ts\n`,
     "a.gen.ts": `export const a = 1;`, "keep.gen.ts": `export const k = 1;`,
     "logs/x.ts": `export const x = 1;`, "rootonly.ts": `export const r = 1;`, "sub/rootonly.ts": `export const r2 = 1;`,
     "p/q/deep/z.ts": `export const z = 1;`, "p/q/ok.ts": `export const ok = 1;`,
     "file1.ts": `export const f = 1;`, "file12.ts": `export const f2 = 1;`, "#hash.ts": `export const h = 1;`,
+    "gen/a/b.ts": `export const g = 1;`, "xzzy.ts": `export const xy = 1;`,
     "pkg/.gitignore": `*.ts\n!api.ts\n/local/\n`,
     "pkg/api.ts": `export const api = 1;`, "pkg/impl.ts": `export const impl = 1;`, "pkg/local/l.ts": `export const l = 1;`,
     "pkg/other/.gitignore": `!impl.ts\n`, "pkg/other/impl.ts": `export const impl2 = 1;`, "pkg/other/more.ts": `export const m = 1;`,

@@ -14,14 +14,22 @@ const MAX_BYTES = 1_000_000;
 /** Result of one rule file for a path: true = ignored, false = re-included by `!rule`, undefined = no rule matches. */
 type IgnoreMatcher = (rel: string, isDir: boolean) => boolean | undefined;
 
-const globToRegex = (body: string) =>
-  new RegExp(
-    "^" + body
-      .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-      .replace(/\*\*\//g, "\u0001").replace(/\/\*\*$/, "/\u0002").replace(/\*\*/g, "\u0000")
-      .replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]")
-      .replace(/\u0001/g, "(?:.*/)?").replace(/\u0002/g, ".*").replace(/\u0000/g, ".*") + "$",
-  );
+/** Translates one gitignore glob (without leading or trailing slash) to a regex over a posix path. */
+function globToRegex(glob: string): RegExp {
+  let out = "";
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    if (c === "*" && glob[i + 1] === "*") {
+      const dirPrefix = glob[i + 2] === "/" && (i === 0 || glob[i - 1] === "/"); // "**/" matches zero or more directories
+      const dirSuffix = i + 2 === glob.length && i > 0 && glob[i - 1] === "/"; // "/**" matches everything inside
+      out += dirPrefix ? "(?:[^/]+/)*" : dirSuffix ? ".+" : ".*";
+      i += dirPrefix ? 2 : 1;
+    } else if (c === "*") out += "[^/]*";
+    else if (c === "?") out += "[^/]";
+    else out += /[\\^$.+(){}|[\]]/.test(c) ? `\\${c}` : c;
+  }
+  return new RegExp(`^${out}$`);
+}
 
 /**
  * .gitignore support for one file: plain names, `dir/`, `*`, `?`, `**`, `/anchored`, `a/b` (anchored) and `!negation`.
