@@ -49,6 +49,15 @@ test("discover: .gitignore negation, nested files, ?, ** and last rule wins", as
   assert.deepEqual(files.sort(), ["file12.ts", "keep.gen.ts", "p/q/ok.ts", "pkg/api.ts", "pkg/other/impl.ts", "sub/rootonly.ts"]);
 });
 
+test("npm package: ships the CLI, language packs and skill, but not tests or sources", async () => {
+  const repo = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..");
+  const { stdout } = await promisify(execFile)("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], { cwd: repo });
+  const files = (JSON.parse(stdout) as Array<{ files: Array<{ path: string }> }>)[0].files.map((f) => f.path);
+  for (const needed of ["dist/cli.js", "dist/words.js", "lang/nl.json", "skills/codebasetograph/SKILL.md", "package.json", "README.md"]) assert.ok(files.includes(needed), `${needed} is packed`);
+  assert.ok(!files.some((f) => f.startsWith("dist/test/") || f.startsWith("src/") || f.startsWith("node_modules/")), "no tests, sources or dependencies");
+  assert.equal(JSON.parse(await fs.readFile(path.join(repo, "package.json"), "utf8")).bin.cbtg, "dist/cli.js");
+});
+
 test("parse: symbols, Angular roles, imports, re-exports, dynamic import, require", () => {
   const f = parseFile("a.ts", `import a, { b as c } from './x';\nexport * from './y';\nconst z = require('z');\nimport('./lazy');\n@Component({selector:'app-a'})\nexport class A {}\nexport interface I {}\nexport const k = 1;`);
   assert.deepEqual(f.imports.map((i) => [i.specifier, i.reexport, i.dynamic]), [["./x", false, false], ["./y", true, false], ["z", false, false], ["./lazy", false, true]]);
