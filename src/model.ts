@@ -54,6 +54,16 @@ export interface FileFacts {
   imports: Array<{ specifier: string; names: string[]; line: number; reexport: boolean; dynamic: boolean; wildcard?: boolean; ref?: "path" | "image" | "action" | "object" | "doc" | "npm" | "maven" | "service" }>;
 }
 
+/** One commit as the graph keeps it: words of its message (not the message) and the indexed files it touched. */
+export interface HistoryCommit {
+  /** First 12 characters of the commit hash. */
+  id: string;
+  /** Commit time, seconds since 1970. */
+  time: number;
+  words: string[];
+  files: string[];
+}
+
 export interface Graph {
   version: 1;
   /** tsconfig baseUrl/paths found in the repo; kept so linking is reproducible from the graph file. */
@@ -63,4 +73,6 @@ export interface Graph {
   nodes: GraphNode[];
   edges: GraphEdge[];
   skipped: Array<{ path: string; reason: string }>;
+  /** Git history (newest first) used to rank files by the words of earlier commits; absent outside a git work tree. */
+  history?: HistoryCommit[];
 }

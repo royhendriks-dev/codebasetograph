@@ -102,54 +102,104 @@ export function wordWeights(g: Graph, words: string[]): (w: string) => number {
 
 export interface ContextItem { path: string; lines?: [number, number]; why: string; evidence: string }
 
+/** Symbol lines shown per file in `context`; one large file must not use the whole budget. */
+const SYMBOLS_PER_FILE = 3;
+/** Share of a top file's score that a directly linked file gets, by evidence of the link. */
+const NEIGHBOUR_SHARE: Record<string, number> = { resolved: 0.5, inferred: 0.3 };
+
 /**
- * Task context: match words from the task to symbol/file names, add direct neighbours,
- * and stop when the budget (approximate token count of the rendered text) is reached.
- * Output is a pointer list, not source code: the agent must still open the files it needs.
+ * Files ranked by the words of earlier commits that touched them. Commit messages are written in the team's own words
+ * ("opstartscherm", "dark mode"), so they link task language to files even when no file or symbol name contains the word.
+ * Words are weighted by how rare they are among commits; a commit that touches many files spreads its weight over them.
+ * Returns score and the matched words per file.
  */
-export function context(g: Graph, task: string, budgetTokens = 800, synonyms: Record<string, string[]> = {}): { text: string; items: ContextItem[]; truncated: boolean } {
+export function historyRanking(g: Graph, words: string[]): Map<string, { score: number; words: Set<string> }> {
+  const out = new Map<string, { score: number; words: Set<string> }>();
+  const commits = g.history ?? [];
+  if (!commits.length || !words.length) return out;
+  const hits = (c: { words: string[] }, w: string) => c.words.some((a) => a === w || sharesStem(a, w));
+  const idf = new Map(words.map((w) => [w, Math.log(1 + commits.length / (1 + commits.filter((c) => hits(c, w)).length))]));
+  for (const c of commits) {
+    const matched = words.filter((w) => hits(c, w));
+    if (!matched.length) continue;
+    const share = matched.reduce((s, w) => s + idf.get(w)!, 0) / Math.log(2 + c.files.length);
+    for (const f of c.files) {
+      const r = out.get(f) ?? out.set(f, { score: 0, words: new Set() }).get(f)!;
+      r.score += f.endsWith(".md") ? share * 0.3 : share;
+      for (const w of matched) r.words.add(w);
+    }
+  }
+  return out;
+}
+
+/** Reciprocal rank fusion: merges ranked lists by position only, so scores on different scales need no calibration. */
+function fuse(lists: string[][], k = 10): string[] {
+  const score = new Map<string, number>();
+  for (const list of lists) list.forEach((p, i) => score.set(p, (score.get(p) ?? 0) + 1 / (k + i + 1)));
+  return [...score].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).map(([p]) => p);
+}
+
+/**
+ * Task context: match words from the task to symbol/file names, give files linked to the best matches part of their score,
+ * merge that ranking with the commit-history ranking, and stop when the budget (approximate token count of the rendered
+ * text) is reached. Output is a pointer list, not source code: the agent must still open the files it needs.
+ */
+export function context(g: Graph, task: string, budgetTokens = 800, synonyms: Record<string, string[]> = {}): { text: string; items: ContextItem[]; shown: ContextItem[]; truncated: boolean } {
   const words = taskWords(task, synonyms);
   const weight = wordWeights(g, words);
-  const score = new Map<string, number>();
-  const items: ContextItem[] = [];
+  // Matches per file, best first. Files rank by their best match plus half of every further match, so a file where several names match beats a file with one lucky symbol.
+  const matches = new Map<string, Array<[number, GraphNode]>>();
   for (const n of g.nodes) {
     if (n.kind === "package") continue;
     const s = scoreNode(n, words, weight);
-    if (s > 0) score.set(n.id, s);
+    if (s > 0) (matches.get(n.path!) ?? matches.set(n.path!, []).get(n.path!)!).push([s, n]);
   }
-  const byId = new Map(g.nodes.map((n) => [n.id, n]));
-  // Files rank by their best match plus half of every further match, so a file where several names match beats a file with one lucky symbol.
   const fileScore = new Map<string, number>();
-  for (const [id, s] of [...score].sort((a, b) => b[1] - a[1])) {
-    const p = byId.get(id)!.path!;
-    fileScore.set(p, fileScore.has(p) ? fileScore.get(p)! + s / 2 : s);
+  for (const [p, list] of matches) {
+    list.sort((a, b) => b[0] - a[0] || a[1].id.localeCompare(b[1].id));
+    fileScore.set(p, list.reduce((sum, [s], i) => sum + (i === 0 ? s : s / 2), 0));
   }
-  const ranked = [...score]
-    .sort((a, b) => fileScore.get(byId.get(b[0])!.path!)! - fileScore.get(byId.get(a[0])!.path!)! || b[1] - a[1] || a[0].localeCompare(b[0]))
-    .map(([id]) => byId.get(id)!);
-  const seenFiles = new Set<string>();
-  for (const n of ranked) {
-    items.push({ path: n.path!, lines: n.lines, why: `${n.kind === "symbol" ? n.detail + " " : "file "}${n.name}${n.exported ? " (exported)" : ""} matches task words`, evidence: "extracted" });
-    seenFiles.add(n.path!);
+  const byScore = (m: Map<string, number>) => [...m].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).map(([p]) => p);
+  // Files imported by or importing the five best matches join the ranking with part of that file's score.
+  const nameScore = new Map(fileScore);
+  const via = new Map<string, string>();
+  for (const p of byScore(fileScore).slice(0, 5)) {
+    for (const e of [...dependencies(g, p), ...dependents(g, p)]) {
+      const other = e.from === fileId(p) ? e.to : e.from;
+      const share = NEIGHBOUR_SHARE[e.evidence] ?? 0;
+      if (!other.startsWith("file:") || other === fileId(p) || !share) continue;
+      const q = other.slice(5);
+      nameScore.set(q, (nameScore.get(q) ?? 0) + fileScore.get(p)! * share * (isTestPath(q) ? 0.5 : 1));
+      if (!fileScore.has(q) && !via.has(q)) via.set(q, p);
+    }
   }
-  for (const p of [...seenFiles].slice(0, 5)) {
-    for (const r of related(g, p, 1)) {
-      if (seenFiles.has(r.path)) continue;
-      seenFiles.add(r.path);
-      items.push({ path: r.path, why: `imports or is imported by ${p}`, evidence: "resolved" });
+  const history = historyRanking(g, words);
+  const ranking = history.size ? fuse([byScore(nameScore), byScore(new Map([...history].map(([p, h]) => [p, h.score])))]) : byScore(nameScore);
+  const items: ContextItem[] = [];
+  for (const p of ranking) {
+    const own = matches.get(p);
+    if (own) {
+      for (const [, n] of own.slice(0, SYMBOLS_PER_FILE))
+        items.push({ path: p, lines: n.lines, why: `${n.kind === "symbol" ? n.detail + " " : "file "}${n.name}${n.exported ? " (exported)" : ""} matches task words`, evidence: "extracted" });
+    } else if (via.has(p)) {
+      items.push({ path: p, why: `imports or is imported by ${via.get(p)}`, evidence: "resolved" });
+    } else if (history.has(p)) {
+      items.push({ path: p, why: `changed in earlier commits about ${[...history.get(p)!.words].slice(0, 3).join(", ")}`, evidence: "inferred" });
     }
   }
   const lines: string[] = [];
+  const shown: ContextItem[] = [];
   let used = 0, truncated = false;
   for (const it of items) {
     const line = `- ${it.path}${it.lines ? `:${it.lines[0]}-${it.lines[1]}` : ""} [${it.evidence}] ${it.why}`;
     const cost = Math.ceil(line.length / 4);
     if (used + cost > budgetTokens) { truncated = true; break; }
-    used += cost; lines.push(line);
+    used += cost; lines.push(line); shown.push(it);
   }
-  const unresolved = g.edges.filter((e) => e.evidence === "unresolved" && [...seenFiles].some((p) => e.from === fileId(p)));
+  const shownFiles = new Set(shown.map((i) => i.path));
+  const unresolved = g.edges.filter((e) => e.evidence === "unresolved" && shownFiles.has(e.from.slice(5)));
   if (unresolved.length) lines.push(`! ${unresolved.length} unresolved import(s) in these files; the graph may miss links (e.g. an alias that is not in any tsconfig).`);
-  return { text: lines.join("\n") || "no matches", items, truncated };
+  return { text: lines.join("\n") || "no matches", items, shown, truncated };
 }
 
 export type Resolved =

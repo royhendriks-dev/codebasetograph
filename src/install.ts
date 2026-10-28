@@ -112,6 +112,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: \${{ github.event.pull_request.head.ref }}
+          # Full history: \`cbtg index\` ranks files by the words of earlier commits that touched them.
+          fetch-depth: 0
           # A push with the default token does not start CI on the new commit. When the repository secret
           # CBTG_PUSH_TOKEN exists (fine-grained PAT, contents: write on this repository only), the push uses it and CI runs.
           token: \${{ secrets.CBTG_PUSH_TOKEN || github.token }}

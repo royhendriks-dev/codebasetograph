@@ -8,7 +8,7 @@ import { watchRepo } from "./watch.js";
 import { handleLine, hookOutput } from "./agent.js";
 import { createInterface } from "node:readline";
 import { loadSynonyms } from "./words.js";
-import { loadTasks, renderReport, runBenchmark } from "./bench.js";
+import { loadTasks, renderReport, runBenchmark, runGitBenchmark } from "./bench.js";
 import { installAgents, installClaude, installGit, nextSteps, removeAgents, removeClaude, removeGit, type Scope } from "./install.js";
 import { fileURLToPath } from "node:url";
 import { context, dependencies, dependents, explain, findSymbols, related, resolveTarget, shortestPath } from "./query.js";
@@ -31,6 +31,7 @@ const usage = `cbtg <command> [--root dir] [--graph-dir dir]   (--graph-dir keep
   view [--out file]           write a self-contained HTML explorer (default .cbtg/graph.html)
   view --graph [--max-nodes n] [--out file]   drawn file graph (default .cbtg/graph-map.html, 400 nodes)
   bench <tasks.json> [--files n] [--budget tokens] [--synonyms file.json]   compare grep baseline with graph context on tasks with known relevant files
+  bench --from-git [--ref ref] [--tasks n] [--files n] [--budget tokens] [--no-history]   same, with tasks from the git history: each commit is searched in the state before it
   install git [--cbtg-repo url] [--cbtg-ref ref] [--remove]   commit the graph: .gitattributes, AGENTS.md block, GitHub workflow that refreshes it on every PR
   install claude|agents [--scope user|project] [--remove]   install the skill for Claude Code (~/.claude/skills or <root>/.claude/skills), or a marked block in <root>/AGENTS.md for other agents
   mcp                         MCP server over stdio (tools: cbtg_context, cbtg_find, cbtg_deps, cbtg_dependents, cbtg_related, cbtg_explain, cbtg_path)
@@ -74,6 +75,12 @@ async function main() {
     for await (const c of process.stdin) chunks.push(c as Buffer);
     const out = await hookOutput(Buffer.concat(chunks).toString("utf8"), root, graphDir).catch(() => "");
     if (out) console.log(out);
+    return;
+  }
+  if (cmd === "bench" && rest.includes("--from-git")) {
+    const opts = { maxFiles: Number(flag("files") ?? 5), budget: Number(flag("budget") ?? 800), synonyms: flag("synonyms") ? await loadSynonyms(path.resolve(flag("synonyms")!)) : {},
+      ref: flag("ref"), tasks: Number(flag("tasks") ?? 50), history: !rest.includes("--no-history") };
+    console.log(renderReport(await runGitBenchmark(root, opts), opts));
     return;
   }
   const g = await loadGraph(root, graphDir);
@@ -121,7 +128,7 @@ async function main() {
     }
     case "context": { const r = context(g, arg, Number(flag("budget") ?? 800), await synonyms()); console.log(r.text); if (r.truncated) console.log("(truncated by budget)"); break; }
     case "bench": {
-      if (!arg) { console.error("usage: cbtg bench <tasks.json>"); process.exit(1); }
+      if (!arg) { console.error("usage: cbtg bench <tasks.json> | cbtg bench --from-git"); process.exit(1); }
       const opts = { maxFiles: Number(flag("files") ?? 5), budget: Number(flag("budget") ?? 800), synonyms: await synonyms() };
       console.log(renderReport(await runBenchmark(path.resolve(root), g, await loadTasks(path.resolve(arg)), opts), opts));
       break;

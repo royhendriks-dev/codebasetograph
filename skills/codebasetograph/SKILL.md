@@ -19,7 +19,7 @@ Per project: `cbtg index` (from the project root, or `--root <project>`). Re-run
 
 ## Workflow
 
-1. `cbtg context "<task in plain words>" --budget 800`: ranked file/line pointers for the task.
+1. `cbtg context "<task in plain words>" --budget 800`: ranked file/line pointers for the task. Write the task in the words the team uses in commit messages: files are also ranked by earlier commits about the same thing, listed as `[inferred] changed in earlier commits about ...` (a hint, open the file to check).
 2. `cbtg find <name>`: locate a symbol or file.
 3. `cbtg deps <file>` / `cbtg dependents <file>`: what a file imports / who imports it (check this before changing an export).
 4. `cbtg related <file> --depth 2`: files within N import hops.

@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { historyForGraph, readGitHistory } from "./history.js";
 import { discover } from "./discover.js";
 import { parseFile, TS_PARSER_VERSION } from "./parse.js";
 import { parseJava, JAVA_PARSER_VERSION } from "./java.js";
@@ -312,11 +313,18 @@ export function serializeGraph(g: Graph): string {
   const lines = (items: unknown[]) => items.map((i) => JSON.stringify(i)).join(",\n");
   const files = Object.keys(g.files).sort(byCodeUnit).map((k) => `${JSON.stringify(k)}:${JSON.stringify(g.files[k])}`).join(",\n");
   const aliases = g.aliases ? `"aliases":${JSON.stringify(g.aliases)},\n` : "";
-  return `{"version":${g.version},"root":${JSON.stringify(g.root)},\n${aliases}"files":{\n${files}\n},\n"nodes":[\n${lines(g.nodes)}\n],\n"edges":[\n${lines(g.edges)}\n],\n"skipped":[\n${lines(g.skipped)}\n]}\n`;
+  const history = g.history ? `,\n"history":[\n${lines(g.history)}\n]` : "";
+  return `{"version":${g.version},"root":${JSON.stringify(g.root)},\n${aliases}"files":{\n${files}\n},\n"nodes":[\n${lines(g.nodes)}\n],\n"edges":[\n${lines(g.edges)}\n],\n"skipped":[\n${lines(g.skipped)}\n]${history}}\n`;
 }
 
+/**
+ * `merge` (default) keeps commits from the previous graph that git no longer shows (a shallow clone); `git` uses only what
+ * git shows now (the benchmark needs that, so a graph of an older commit never sees later work); `off` stores no history.
+ */
+export interface IndexOptions { history?: "merge" | "git" | "off" }
+
 /** Indexes `root`. Re-parses only files whose content hash changed; links are always rebuilt. */
-export async function indexRepo(root: string, graphDir?: string): Promise<{ graph: Graph; stats: IndexStats }> {
+export async function indexRepo(root: string, graphDir?: string, opts: IndexOptions = {}): Promise<{ graph: Graph; stats: IndexStats }> {
   root = path.resolve(root);
   const previous = await loadGraph(root, graphDir);
   const { files: found, configs, skipped } = await discover(root);
@@ -338,6 +346,11 @@ export async function indexRepo(root: string, graphDir?: string): Promise<{ grap
   }
   const removed = previous ? Object.keys(previous.files).filter((p) => !(p in files)).length : 0;
   const graph: Graph = { version: 1, root: path.basename(root), files, aliases, ...link(files, aliases), skipped };
+  const mode = opts.history ?? "merge";
+  if (mode !== "off") {
+    const history = historyForGraph(await readGitHistory(root), files, mode === "merge" ? previous?.history : undefined);
+    if (history.length) graph.history = history;
+  }
   const dir = graphDirOf(root, graphDir);
   await fs.mkdir(dir, { recursive: true });
   if (!graphDir) await keepOutOfGit(root);

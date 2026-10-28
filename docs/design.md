@@ -28,7 +28,8 @@ discover -> parse (per file) -> link (all files) -> graph.json -> query -> CLI /
 | `discover.ts` | Walk repo, default exclusions, simple `.gitignore`, skip `.d.ts`/minified/large files, no symlinks |
 | `parse.ts` | TypeScript compiler API (parse only, nothing executed): imports, re-exports, `require`, dynamic `import('literal')`, top-level declarations, Angular decorator roles and selectors |
 | `build.ts` | Per-file cache by content hash, linking, atomic write of `.cbtg/graph.json` |
-| `query.ts` | find, deps, dependents, bounded related walk, budgeted task context |
+| `query.ts` | find, deps, dependents, bounded related walk, budgeted task context (names + commit history) |
+| `history.ts` | `git log` (read-only) to per-commit message words and touched indexed files, stored in the graph |
 | `view.ts` | Self-contained HTML explorer generated from the graph: search, symbols per file, imports / imported-by with evidence badges. Repo-derived text is set via `textContent` (untrusted input). This is the list view for reading |
 | `viewGraph.ts` | `cbtg view --graph`: drawn file graph for humans (agents use the queries). One self-contained page, no libraries or network: canvas, in-page force layout, nodes = linked files coloured and pulled together per folder cluster (project folder + innermost folder, generic parts like `src`/`main`/`java` skipped; cluster names drawn on the map), edges coloured by evidence, click highlights neighbours and lists the file's links and symbols (max 40), search, drag/zoom. The layout uses grid-based repulsion and runs a few iterations per animation frame, so the page stays responsive and draws while it settles (1,500 synthetic files: about 2.5 s in headless Chromium; checked with a screenshot, not a usability test). File-to-file edges only, duplicates collapsed, truncated to the most connected `--max-nodes` (default 400) files and the page says so. Names are drawn with canvas or `textContent`, never `innerHTML` |
 | `java.ts` | Java via tree-sitter (WASM grammar, parse only): package, imports (incl. static and wildcard), top-level types with annotations (e.g. `@Path`, `@ApplicationScoped`), methods, `extends`/`implements` |
@@ -79,7 +80,7 @@ Per-file facts are cached by SHA-256 of content. Changed files are re-parsed, de
 - TypeScript: file-level imports and top-level declarations only: no call graph, no member-level symbols, duplicate names in one file collapse to one node. Java: see above.
 - No package `exports`, monorepo workspace package names, or Angular DI/router edges. Imports that no tsconfig rule covers show as `inferred` packages.
 - `.gitignore` support is partial (no negation, no nested files).
-- Context ranking is plain name matching. It is a baseline to measure against, not a claim of quality.
+- Context ranking is name matching plus commit history (see below). Measured with `cbtg bench --from-git`; not measured is whether an agent finishes tasks better.
 - Only tests in `src/test` were run, on small synthetic fixtures. **No larger real-world repository and no token benchmark has been run yet.**
 
 ## Next steps
@@ -123,3 +124,13 @@ Per-file facts are cached by SHA-256 of content. Changed files are re-parsed, de
 
 - `src/watch.ts` + `cbtg watch`: recursive `fs.watch` on the repo root; events are debounced (300 ms default) into one incremental `indexRepo` run; runs never overlap (a change during a run schedules one more); ignored folders and the graph directory are skipped so writing the graph does not trigger itself. Indexing errors are reported and watching continues. Stops on SIGINT/SIGTERM.
 - Limits: relies on platform file events (recursive `fs.watch` needs Node >= 20; unreliable on some network or container mounts); a rename is seen as a change, the cache then drops the old path on the next run.
+
+## Commit history (`history.ts`)
+
+- Why: on 71 past portfolio pull requests (graph built before each one), 43% of the files a change touched shared no word with the task (Dutch task, English names; texts in data files). Commit messages are in the team's words and already say which files belong to "opstartscherm" or "versieblokken".
+- Index: `git -C <root> log --no-merges --relative --name-only -n 2000`. Per commit: first 12 hash characters, commit time, at most 40 message words (lower-cased, 3+ characters, stop words, trailers such as `Co-Authored-By:`, URLs, numbers and hex hashes removed) and the touched files that are indexed. Commits without indexed files (a bot commit that only updates `.cbtg/graph.json`) or with more than 100 are dropped. One commit per line in `graph.json`, newest first.
+- Shallow clones: by default the commits of the previous graph that git no longer shows are kept (`history: "merge"`); the benchmark uses `history: "git"` so an older state never sees later commits.
+- Ranking: per task word an idf over commits (rare words count more); a commit adds the sum of its matched word weights, divided by log(2 + files touched), to each file it touched (Markdown x0.3). Words match like names do (equal, or one is a 4+ character prefix of the other).
+- Context: name ranking (best match + half of further matches; files linked to the five best get 50% (resolved) or 30% (inferred) of that file's score, tests half) and history ranking are merged with reciprocal rank fusion (k = 10). At most 3 symbol lines per file. Without history the name ranking is used as is.
+- Measured (`cbtg bench --from-git`, 5 opened files, at least one relevant file found, names only -> names + history): portfolio 39% -> 61% (71 tasks), codebasetograph 76% -> 90% (29), recipes-for-me 33% -> 67% (15). Grep in the same runs: 34%, 97%, 87%.
+- Not done: weighting recent commits higher, co-change (files that change together), renames across history (old paths drop out when the file no longer exists).
