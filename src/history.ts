@@ -4,6 +4,7 @@ import type { Graph, HistoryCommit } from "./model.js";
 import { STOPWORDS } from "./words.js";
 
 const run = promisify(execFile);
+const byCodeUnit = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 /** Newest commits kept in the graph. Older work says less about where today's code lives, and the graph stays small. */
 export const MAX_COMMITS = 2000;
@@ -58,7 +59,7 @@ export function historyForGraph(found: Array<HistoryCommit>, files: Graph["files
   for (const c of [...found, ...previous]) {
     const kept = c.files.filter((f) => f in files);
     if (byId.has(c.id) || !kept.length || kept.length > MAX_FILES_PER_COMMIT || !c.words.length) continue;
-    byId.set(c.id, { id: c.id, time: c.time, words: c.words, files: kept.sort() });
+    byId.set(c.id, { id: c.id, time: c.time, words: c.words, files: kept.sort(byCodeUnit) });
   }
   // Stable sort: commits with the same time keep git's order (newest first).
   return [...byId.values()].sort((a, b) => b.time - a.time).slice(0, MAX_COMMITS);
