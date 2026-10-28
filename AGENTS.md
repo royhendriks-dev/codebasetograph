@@ -8,7 +8,7 @@ If `.cbtg/graph.json` exists (or can be built with `cbtg index`), query it first
 
 ```
 node dist/cli.js index                      # build/update (after `npm install && npm run build`)
-node dist/cli.js context "<task>" --budget 800
+node dist/cli.js context "<task>" --budget 800   # task not in Dutch? add --lang none or --lang <pack.json>
 node dist/cli.js dependents <file>          # before changing an export
 ```
 
