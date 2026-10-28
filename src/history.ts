@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { Graph, HistoryCommit } from "./model.js";
-import { STOPWORDS } from "./words.js";
+import { stopWords } from "./words.js";
 
 const run = promisify(execFile);
 const byCodeUnit = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -19,9 +19,10 @@ const TRAILER = /^(signed-off-by|co-authored-by|reviewed-by|acked-by|claude-sess
  */
 export function messageWords(message: string): string[] {
   const body = message.split("\n").filter((l) => !TRAILER.test(l.trim())).join("\n").replace(/https?:\/\/\S+/g, " ");
+  const stop = stopWords();
   const out = new Set<string>();
   for (const w of body.toLowerCase().split(/[^a-z0-9]+/)) {
-    if (w.length < 3 || STOPWORDS.has(w) || /^\d+$/.test(w) || /^(?=.*\d)[0-9a-f]{7,}$/.test(w)) continue;
+    if (w.length < 3 || stop.has(w) || /^\d+$/.test(w) || /^(?=.*\d)[0-9a-f]{7,}$/.test(w)) continue;
     out.add(w);
     if (out.size >= MAX_WORDS_PER_COMMIT) break;
   }

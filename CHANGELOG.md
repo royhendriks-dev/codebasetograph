@@ -9,6 +9,7 @@ Alle noemenswaardige wijzigingen per release. Versies volgen [semver](https://se
 - `cbtg view --overview`: mappenoverzicht zonder bestands-, symbool- of secretnamen (`overview.json` en `GRAPH.md` met Mermaid-diagram), veilig om buiten de repo te tonen.
 - `cbtg install git --views-branch <branch>`: de workflow schrijft na elke merge naar die branch de weergaven (GRAPH.md, overview.json, graph.html, graph-map.html) in één commit; PR's werken alleen `graph.json` bij.
 - `cbtg bench --from-git`: taken uit de eigen git-historie, elke taak gezocht in de toestand vóór de commit (geen terugblik); met `--no-history` te vergelijken. Het rapport toont ook hoe vaak minstens één juist bestand gevonden is en de MRR.
+- Generieke tree-sitter-extractor (`src/treesitter.ts`) met Python, Go en C#: declaraties, methoden en imports/`using`, plus koppelingen tussen bestanden (`src/linkTreeSitter.ts`). De grammatica's komen uit het bestaande `tree-sitter-wasms` en worden pas geladen als er zulke bestanden zijn.
 
 ### Gewijzigd
 - `cbtg context`: maximaal 3 symboolregels per bestand, en bestanden die direct gekoppeld zijn aan de beste treffers krijgen een deel van hun score (in plaats van achteraan de lijst).
