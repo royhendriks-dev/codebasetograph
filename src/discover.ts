@@ -4,8 +4,9 @@ import * as path from "node:path";
 const DEFAULT_IGNORED_DIRS = new Set([
   ".git", "node_modules", "dist", "build", "out", "coverage", ".angular", ".next", ".nx",
   ".cache", ".cbtg", "tmp", ".turbo", "target", ".gradle", ".idea",
+  "__pycache__", ".venv", "venv", ".mypy_cache", ".pytest_cache", ".tox", "vendor", "obj",
 ]);
-const EXTS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".java", ".yml", ".yaml", ".sql", ".conf", ".properties", ".md", ".html", ".scss", ".css"]);
+const EXTS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".java", ".py", ".go", ".cs", ".yml", ".yaml", ".sql", ".conf", ".properties", ".md", ".html", ".scss", ".css"]);
 /** `.env.example` style templates only: a real `.env` is never indexed. */
 const ENV_TEMPLATE = /^\.env(\.[\w-]+)?\.(example|sample|template)$/;
 const isIndexable = (name: string) => EXTS.has(path.extname(name)) || /^(package\.json|pom\.xml)$/.test(name) || /^Dockerfile(\.[\w.-]+)?$/.test(name) || ENV_TEMPLATE.test(name);
@@ -64,7 +65,7 @@ export async function discover(root: string): Promise<Discovered> {
         if (ignored(rel, false)) continue;
         if (/^(tsconfig(\.[\w.-]+)?|jsconfig)\.json$/.test(e.name)) { configs.push(rel); continue; }
         if (!isIndexable(e.name)) continue;
-        if (/\.d\.[cm]?ts$/.test(e.name) || /\.min\.[cm]?js$/.test(e.name)) {
+        if (/\.d\.[cm]?ts$/.test(e.name) || /\.min\.[cm]?js$/.test(e.name) || /(_pb2(_grpc)?\.py|\.pb\.go|\.g\.cs|\.designer\.cs)$/i.test(e.name)) {
           skipped.push({ path: rel, reason: "generated/declaration file" });
           continue;
         }
