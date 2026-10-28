@@ -39,6 +39,19 @@ npm test
 
 Agents: see [AGENTS.md](AGENTS.md) and [skills/codebasetograph/SKILL.md](skills/codebasetograph/SKILL.md). The instructions are provider-neutral; to use the tool in another project see [Install as a skill](#install-as-a-skill).
 
+## Task language
+
+`context` and `bench` match the words of your task against file and symbol names. Tasks are often written in another language than the code, so cbtg maps task words with a language pack (stop words plus a small glossary). The word lists are data, not code: the built-in Dutch pack is [lang/nl.json](lang/nl.json) and stays the default, so nothing changes for existing users.
+
+```
+cbtg context "<task>" --lang nl                 # default: the built-in Dutch pack
+cbtg context "<task>" --lang none               # no pack, only English stop words
+cbtg context "<task>" --lang my-pack.json       # your own language, see below
+cbtg context "<task>" --synonyms words.json     # extra single words on top of the pack
+```
+
+A pack is a JSON file `{ "stopwords": ["der", "die"], "glossary": { "anmelden": ["login"] } }` (both keys optional). `--lang` also works for `bench`. Packs next to `lang/nl.json` can be selected by their two- or three-letter name.
+
 ## Branches and releases
 
 - `develop` is where work lands: every feature or bugfix goes in a pull request with base `develop` and is merged there once CI and SonarCloud are green.

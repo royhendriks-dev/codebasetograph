@@ -7,7 +7,7 @@ import { renderGraphHtml, DEFAULT_MAX_NODES } from "./viewGraph.js";
 import { watchRepo } from "./watch.js";
 import { handleLine, hookOutput } from "./agent.js";
 import { createInterface } from "node:readline";
-import { loadSynonyms } from "./words.js";
+import { loadLanguage, loadSynonyms, useLanguage } from "./words.js";
 import { loadTasks, renderReport, runBenchmark } from "./bench.js";
 import { installAgents, installClaude, installGit, nextSteps, removeAgents, removeClaude, removeGit, type Scope } from "./install.js";
 import { fileURLToPath } from "node:url";
@@ -30,12 +30,12 @@ const usage = `cbtg <command> [--root dir] [--graph-dir dir]   (--graph-dir keep
   path <from> <to>            shortest chain of resolved links between two files or symbols
   view [--out file]           write a self-contained HTML explorer (default .cbtg/graph.html)
   view --graph [--max-nodes n] [--out file]   drawn file graph (default .cbtg/graph-map.html, 400 nodes)
-  bench <tasks.json> [--files n] [--budget tokens] [--synonyms file.json]   compare grep baseline with graph context on tasks with known relevant files
+  bench <tasks.json> [--files n] [--budget tokens] [--synonyms file.json] [--lang nl|none|pack.json]   compare grep baseline with graph context on tasks with known relevant files
   install git [--cbtg-repo url] [--cbtg-ref ref] [--remove]   commit the graph: .gitattributes, AGENTS.md block, GitHub workflow that refreshes it on every PR
   install claude|agents [--scope user|project] [--remove]   install the skill for Claude Code (~/.claude/skills or <root>/.claude/skills), or a marked block in <root>/AGENTS.md for other agents
   mcp                         MCP server over stdio (tools: cbtg_context, cbtg_find, cbtg_deps, cbtg_dependents, cbtg_related, cbtg_explain, cbtg_path)
   hook                        Claude Code UserPromptSubmit hook: reads the hook JSON on stdin, prints task context for the prompt (nothing if there is no graph)
-  context "<task>" [--budget tokens] [--synonyms file.json]   pointer list of task-relevant code (Dutch words are mapped to English; the optional file adds your own, {"inloggen":["login"]})`;
+  context "<task>" [--budget tokens] [--synonyms file.json] [--lang nl|none|pack.json]   pointer list of task-relevant code (task words are mapped to code words with a language pack: nl is the default, none turns it off, or give your own pack file {"stopwords":[],"glossary":{"inloggen":["login"]}}; --synonyms adds single words on top)`;
 
 async function main() {
   if (cmd === "index") {
@@ -79,6 +79,7 @@ async function main() {
   const g = await loadGraph(root, graphDir);
   if (!g) { console.error("no graph found; run `cbtg index` first"); process.exit(1); }
   const arg = positional[0] ?? "";
+  if (flag("lang")) useLanguage(await loadLanguage(flag("lang")!));
   const synonyms = async () => (flag("synonyms") ? loadSynonyms(path.resolve(flag("synonyms")!)) : {});
   const fmt = (e: { from: string; to: string; evidence: string; line?: number; specifier?: string }, side: "from" | "to") =>
     `${e[side].replace(/^(file|pkg):/, "")}${e.line ? `:${e.line}` : ""} [${e.evidence}]${e.evidence === "unresolved" ? ` (${e.specifier})` : ""}`;

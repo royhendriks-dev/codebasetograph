@@ -152,6 +152,40 @@ test("dutch tasks: stop words are dropped and a glossary plus user synonyms map 
   await assert.rejects(loadSynonyms(path.join(root, "arr.json")), /JSON object/);
 });
 
+test("language packs: nl is the default, none turns it off, a file brings another language", async () => {
+  const { taskWords, loadLanguage, useLanguage, DEFAULT_PACK } = await import("../words.js");
+  const root = await fixture({
+    "de.json": `{ "stopwords": ["der", "die"], "glossary": { "anmelden": ["login"] } }`, "bad.json": `{ "glossary": { "a": "x" } }`,
+    "bad2.json": `{ "stopwords": [1] }`, "bad3.json": `[]`, "bad4.json": `{ "glossary": [] }`,
+  });
+  assert.equal(await loadLanguage(), DEFAULT_PACK);
+  assert.equal((await loadLanguage("nl")).name, "nl");
+  assert.deepEqual(taskWords("de gebruiker wil inloggen", {}, await loadLanguage("none")), ["gebruiker", "wil", "inloggen"], "no pack, only English stop words");
+  const de = await loadLanguage(path.join(root, "de.json"));
+  assert.deepEqual(taskWords("der Nutzer will anmelden", {}, de), ["nutzer", "will", "anmelden", "login"]);
+  useLanguage(de);
+  assert.ok(taskWords("anmelden").includes("login"), "the active pack is used by default");
+  useLanguage(DEFAULT_PACK);
+  assert.ok(taskWords("inloggen").includes("login"));
+  await assert.rejects(loadLanguage("xx"), /unknown language/);
+  await assert.rejects(loadLanguage(path.join(root, "bad.json")), /array of strings/);
+  await assert.rejects(loadLanguage(path.join(root, "bad2.json")), /stopwords/);
+  await assert.rejects(loadLanguage(path.join(root, "bad3.json")), /JSON object/);
+  await assert.rejects(loadLanguage(path.join(root, "bad4.json")), /glossary must be an object/);
+});
+
+test("cli: --lang switches the language pack for context", async () => {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const root = await fixture({ "src/login.ts": `export class LoginForm {}`, "src/zzz.ts": `export const x = 1;`, "de.json": `{ "glossary": { "anmelden": ["login"] } }` });
+  const cli = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "cli.js");
+  const run = (...args: string[]) => promisify(execFile)(process.execPath, [cli, ...args, "--root", root]);
+  await run("index");
+  assert.match((await run("context", "inloggen")).stdout, /src\/login\.ts/, "default pack is Dutch");
+  assert.doesNotMatch((await run("context", "inloggen", "--lang", "none")).stdout, /src\/login\.ts/);
+  assert.match((await run("context", "anmelden", "--lang", path.join(root, "de.json"))).stdout, /src\/login\.ts/);
+});
+
 test("cli: context --synonyms and bench --synonyms", async () => {
   const { execFile } = await import("node:child_process");
   const { promisify } = await import("node:util");
