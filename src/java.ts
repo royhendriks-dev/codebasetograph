@@ -1,9 +1,10 @@
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
 import { Parser, Language, type Node } from "web-tree-sitter";
+import { identWords } from "./idents.js";
 import type { FileFacts } from "./model.js";
 
-export const JAVA_PARSER_VERSION = "java-3";
+export const JAVA_PARSER_VERSION = "java-4";
 const require = createRequire(import.meta.url);
 
 let parserPromise: Promise<Parser> | undefined;
@@ -98,5 +99,7 @@ export async function parseJava(relPath: string, text: string): Promise<FileFact
   const declared = new Set(facts.symbols.filter((x) => !x.name.includes(".")).map((x) => x.name));
   const used = new Set(root.descendantsOfType("type_identifier").map((t) => t?.text).filter((t): t is string => !!t && !declared.has(t)));
   if (used.size) facts.javaTypes = [...used].sort((a, b) => a.localeCompare(b)).slice(0, 300);
+  const idents = identWords(root.descendantsOfType(["identifier", "type_identifier"]).map((t) => t?.text ?? "").filter(Boolean));
+  if (idents.length) facts.idents = idents;
   return facts;
 }

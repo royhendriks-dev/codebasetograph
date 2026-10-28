@@ -2,12 +2,13 @@ import ts from "typescript";
 import { isTestPath } from "./query.js";
 import { createHash } from "node:crypto";
 import type { FileFacts } from "./model.js";
+import { identWords } from "./idents.js";
 import { attributeSelector, customElements, elementSelector } from "./angular.js";
 
 const ANGULAR = new Set(["Component", "Directive", "Pipe", "Injectable", "NgModule"]);
 
 /** Parses source text with the TypeScript parser. Source is never executed. Malformed input yields partial facts. */
-export const TS_PARSER_VERSION = "ts-4";
+export const TS_PARSER_VERSION = "ts-5";
 
 export function parseFile(relPath: string, text: string): FileFacts {
   const hash = createHash("sha256").update(text).digest("hex");
@@ -67,7 +68,9 @@ export function parseFile(relPath: string, text: string): FileFacts {
   };
   const templateText = (t: ts.TemplateExpression) => t.head.text + t.templateSpans.map((sp) => "{}" + sp.literal.text).join("");
 
+  const identNames: string[] = [];
   function visit(n: ts.Node, top: boolean): void {
+    if (ts.isIdentifier(n) || ts.isPrivateIdentifier(n)) identNames.push(n.text);
     if (!isTestPath(relPath)) {
       if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) addRoute(n.text);
       else if (ts.isTemplateExpression(n)) addRoute(templateText(n));
@@ -110,5 +113,7 @@ export function parseFile(relPath: string, text: string): FileFacts {
     ts.forEachChild(n, (c) => visit(c, false));
   }
   sf.statements.forEach((s) => visit(s, true));
+  const idents = identWords(identNames);
+  if (idents.length) facts.idents = idents;
   return facts;
 }
