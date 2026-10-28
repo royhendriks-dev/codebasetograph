@@ -5,7 +5,14 @@ Alle noemenswaardige wijzigingen per release. Versies volgen [semver](https://se
 ## [Unreleased]
 
 ### Toegevoegd
+- Git-historie in de ranking: `cbtg index` bewaart per commit (max. 2000) de woorden van het commitbericht en de geïndexeerde bestanden; `cbtg context` voegt die ranglijst samen met de naamscore. Bestanden die alleen via historie gevonden worden staan er als `[inferred]`.
+- `cbtg bench --from-git`: taken uit de eigen git-historie, elke taak gezocht in de toestand vóór de commit (geen terugblik); met `--no-history` te vergelijken. Het rapport toont ook hoe vaak minstens één juist bestand gevonden is en de MRR.
 - Generieke tree-sitter-extractor (`src/treesitter.ts`) met Python, Go en C#: declaraties, methoden en imports/`using`, plus koppelingen tussen bestanden (`src/linkTreeSitter.ts`). De grammatica's komen uit het bestaande `tree-sitter-wasms` en worden pas geladen als er zulke bestanden zijn.
+
+### Gewijzigd
+- `cbtg context`: maximaal 3 symboolregels per bestand, en bestanden die direct gekoppeld zijn aan de beste treffers krijgen een deel van hun score (in plaats van achteraan de lijst).
+- `cbtg bench` telt aan de graphkant alleen bestanden die binnen het budget getoond worden.
+- De workflow van `cbtg install git` checkt uit met `fetch-depth: 0`.
 
 ## [1.0.0] - 2026-10-25
 

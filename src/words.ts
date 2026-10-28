@@ -50,9 +50,12 @@ let active: LanguagePack = DEFAULT_PACK;
 /** Choose the language pack that `taskWords` uses when no pack is passed (the CLI sets this from `--lang`). */
 export function useLanguage(pack: LanguagePack): void { active = pack; }
 
+/** Stop words of a language pack plus the English ones that always apply. */
+export function stopWords(pack: LanguagePack = active): Set<string> { return new Set([...EN, ...pack.stopwords]); }
+
 /** Words used for matching: lower-cased, stop words dropped, glossary and user synonyms added. */
 export function taskWords(task: string, synonyms: Record<string, string[]> = {}, pack: LanguagePack = active): string[] {
-  const stop = new Set([...EN, ...pack.stopwords]);
+  const stop = stopWords(pack);
   const base = task.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !stop.has(w));
   const out = new Set(base);
   for (const w of base) for (const x of [...(pack.glossary[w] ?? []), ...(synonyms[w] ?? [])]) out.add(x.toLowerCase());
