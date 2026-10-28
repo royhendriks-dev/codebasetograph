@@ -6,6 +6,8 @@ import { parseFile, TS_PARSER_VERSION } from "./parse.js";
 import { parseJava, JAVA_PARSER_VERSION } from "./java.js";
 import { parseConfig, CONFIG_PARSER_VERSION } from "./config.js";
 import { parseAsset, ASSET_PARSER_VERSION } from "./asset.js";
+import { parseTreeSitter, treeSitterLangOf, TREESITTER_PARSER_VERSIONS, type TsLang } from "./treesitter.js";
+import { linkTreeSitter } from "./linkTreeSitter.js";
 import { aliasFor, loadAliases, type Alias } from "./tsconfig.js";
 import type { FileFacts, Graph, GraphEdge, GraphNode } from "./model.js";
 import { isTestPath } from "./query.js";
@@ -13,8 +15,10 @@ import { isTestPath } from "./query.js";
 export const GRAPH_DIR = ".cbtg";
 export const GRAPH_FILE = "graph.json";
 
-export function languageOf(rel: string): "ts" | "java" | "config" | "asset" {
+export function languageOf(rel: string): "ts" | "java" | "config" | "asset" | TsLang {
   if (rel.endsWith(".java")) return "java";
+  const other = treeSitterLangOf(rel);
+  if (other) return other;
   if (/\.(html|scss|css)$/.test(rel)) return "asset";
   return /\.(ya?ml|sql|conf|properties|md)$/.test(rel) || /(^|\/)(\.env[^/]*|package\.json|pom\.xml)$/.test(rel) || /(^|\/)Dockerfile[^/]*$/.test(rel) ? "config" : "ts";
 }
@@ -131,6 +135,7 @@ export function link(files: Record<string, FileFacts>, aliases: Alias[] = []): {
       }
       continue;
     }
+    if (f.lang === "py" || f.lang === "go" || f.lang === "cs") { linkTreeSitter(f, files, known, edges, pkgNode); continue; }
     for (const imp of f.imports) {
       const kind = imp.ref === "path" ? "references" : imp.reexport ? "reexports" : "imports";
       const alias = !imp.specifier.startsWith(".") ? resolveAlias(aliasFor(aliases, f.path), imp.specifier, known) : undefined;
@@ -340,9 +345,9 @@ export async function indexRepo(root: string, graphDir?: string, opts: IndexOpti
     const hash = createHash("sha256").update(text).digest("hex");
     const prev = previous?.files[rel];
     const kind = languageOf(rel);
-    const parserVersion = { ts: TS_PARSER_VERSION, java: JAVA_PARSER_VERSION, config: CONFIG_PARSER_VERSION, asset: ASSET_PARSER_VERSION }[kind];
+    const parserVersion = { ts: TS_PARSER_VERSION, java: JAVA_PARSER_VERSION, config: CONFIG_PARSER_VERSION, asset: ASSET_PARSER_VERSION, ...TREESITTER_PARSER_VERSIONS }[kind];
     if (prev && prev.hash === hash && prev.parser === parserVersion) { files[rel] = prev; reused++; }
-    else { files[rel] = kind === "java" ? await parseJava(rel, text) : kind === "config" ? parseConfig(rel, text) : kind === "asset" ? parseAsset(rel, text) : parseFile(rel, text); parsed++; }
+    else { files[rel] = kind === "py" || kind === "go" || kind === "cs" ? await parseTreeSitter(kind, rel, text) : kind === "java" ? await parseJava(rel, text) : kind === "config" ? parseConfig(rel, text) : kind === "asset" ? parseAsset(rel, text) : parseFile(rel, text); parsed++; }
   }
   const removed = previous ? Object.keys(previous.files).filter((p) => !(p in files)).length : 0;
   const graph: Graph = { version: 1, root: path.basename(root), files, aliases, ...link(files, aliases), skipped };

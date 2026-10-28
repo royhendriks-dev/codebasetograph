@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import * as path from "node:path";
 import * as vm from "node:vm";
 import { indexRepo, loadGraph, serializeGraph } from "../build.js";
+import { discover } from "../discover.js";
 import { parseFile } from "../parse.js";
 import { AGENTS_END, AGENTS_START, claudeSkillFile, installAgents, installClaude, installGit, nextSteps, removeAgents, removeClaude, removeGit, WORKFLOW_FILE } from "../install.js";
 import { context, dependents, findSymbols, nameTokens, sharesStem } from "../query.js";
@@ -31,6 +32,31 @@ const angular = {
   "ignored/a.ts": `export const a = 1;`,
   "src/b.gen.ts": `export const b = 1;`,
 };
+
+test("discover: .gitignore negation, nested files, ?, ** and last rule wins", async () => {
+  const root = await fixture({
+    ".gitignore": `# comment\n*.gen.ts\n!keep.gen.ts\nlogs/\n/rootonly.ts\n**/deep/*.ts\nfile?.ts\n\\#hash.ts\ngen/**\nx**y.ts\n`,
+    "a.gen.ts": `export const a = 1;`, "keep.gen.ts": `export const k = 1;`,
+    "logs/x.ts": `export const x = 1;`, "rootonly.ts": `export const r = 1;`, "sub/rootonly.ts": `export const r2 = 1;`,
+    "p/q/deep/z.ts": `export const z = 1;`, "p/q/ok.ts": `export const ok = 1;`,
+    "file1.ts": `export const f = 1;`, "file12.ts": `export const f2 = 1;`, "#hash.ts": `export const h = 1;`,
+    "gen/a/b.ts": `export const g = 1;`, "xzzy.ts": `export const xy = 1;`,
+    "pkg/.gitignore": `*.ts\n!api.ts\n/local/\n`,
+    "pkg/api.ts": `export const api = 1;`, "pkg/impl.ts": `export const impl = 1;`, "pkg/local/l.ts": `export const l = 1;`,
+    "pkg/other/.gitignore": `!impl.ts\n`, "pkg/other/impl.ts": `export const impl2 = 1;`, "pkg/other/more.ts": `export const m = 1;`,
+  });
+  const { files } = await discover(root);
+  assert.deepEqual(files.sort(), ["file12.ts", "keep.gen.ts", "p/q/ok.ts", "pkg/api.ts", "pkg/other/impl.ts", "sub/rootonly.ts"]);
+});
+
+test("npm package: ships the CLI, language packs and skill, but not tests or sources", async () => {
+  const repo = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..");
+  const { stdout } = await promisify(execFile)("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], { cwd: repo });
+  const files = (JSON.parse(stdout) as Array<{ files: Array<{ path: string }> }>)[0].files.map((f) => f.path);
+  for (const needed of ["dist/cli.js", "dist/words.js", "lang/nl.json", "skills/codebasetograph/SKILL.md", "package.json", "README.md"]) assert.ok(files.includes(needed), `${needed} is packed`);
+  assert.ok(!files.some((f) => f.startsWith("dist/test/") || f.startsWith("src/") || f.startsWith("node_modules/")), "no tests, sources or dependencies");
+  assert.equal(JSON.parse(await fs.readFile(path.join(repo, "package.json"), "utf8")).bin.cbtg, "dist/cli.js");
+});
 
 test("parse: symbols, Angular roles, imports, re-exports, dynamic import, require", () => {
   const f = parseFile("a.ts", `import a, { b as c } from './x';\nexport * from './y';\nconst z = require('z');\nimport('./lazy');\n@Component({selector:'app-a'})\nexport class A {}\nexport interface I {}\nexport const k = 1;`);
@@ -150,6 +176,40 @@ test("dutch tasks: stop words are dropped and a glossary plus user synonyms map 
   assert.equal(context(graph, "begrenzing aanpassen", 800, await loadSynonyms(path.join(root, "syn.json"))).items[0].path, "src/limiter.ts");
   await assert.rejects(loadSynonyms(path.join(root, "bad.json")), /array of strings/);
   await assert.rejects(loadSynonyms(path.join(root, "arr.json")), /JSON object/);
+});
+
+test("language packs: nl is the default, none turns it off, a file brings another language", async () => {
+  const { taskWords, loadLanguage, useLanguage, DEFAULT_PACK } = await import("../words.js");
+  const root = await fixture({
+    "de.json": `{ "stopwords": ["der", "die"], "glossary": { "anmelden": ["login"] } }`, "bad.json": `{ "glossary": { "a": "x" } }`,
+    "bad2.json": `{ "stopwords": [1] }`, "bad3.json": `[]`, "bad4.json": `{ "glossary": [] }`,
+  });
+  assert.equal(await loadLanguage(), DEFAULT_PACK);
+  assert.equal((await loadLanguage("nl")).name, "nl");
+  assert.deepEqual(taskWords("de gebruiker wil inloggen", {}, await loadLanguage("none")), ["gebruiker", "wil", "inloggen"], "no pack, only English stop words");
+  const de = await loadLanguage(path.join(root, "de.json"));
+  assert.deepEqual(taskWords("der Nutzer will anmelden", {}, de), ["nutzer", "will", "anmelden", "login"]);
+  useLanguage(de);
+  assert.ok(taskWords("anmelden").includes("login"), "the active pack is used by default");
+  useLanguage(DEFAULT_PACK);
+  assert.ok(taskWords("inloggen").includes("login"));
+  await assert.rejects(loadLanguage("xx"), /unknown language/);
+  await assert.rejects(loadLanguage(path.join(root, "bad.json")), /array of strings/);
+  await assert.rejects(loadLanguage(path.join(root, "bad2.json")), /stopwords/);
+  await assert.rejects(loadLanguage(path.join(root, "bad3.json")), /JSON object/);
+  await assert.rejects(loadLanguage(path.join(root, "bad4.json")), /glossary must be an object/);
+});
+
+test("cli: --lang switches the language pack for context", async () => {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const root = await fixture({ "src/login.ts": `export class LoginForm {}`, "src/zzz.ts": `export const x = 1;`, "de.json": `{ "glossary": { "anmelden": ["login"] } }` });
+  const cli = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "cli.js");
+  const run = (...args: string[]) => promisify(execFile)(process.execPath, [cli, ...args, "--root", root]);
+  await run("index");
+  assert.match((await run("context", "inloggen")).stdout, /src\/login\.ts/, "default pack is Dutch");
+  assert.doesNotMatch((await run("context", "inloggen", "--lang", "none")).stdout, /src\/login\.ts/);
+  assert.match((await run("context", "anmelden", "--lang", path.join(root, "de.json"))).stdout, /src\/login\.ts/);
 });
 
 test("cli: context --synonyms and bench --synonyms", async () => {

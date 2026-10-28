@@ -2,16 +2,40 @@
   "name": "codebasetograph",
   "version": "1.0.0",
   "description": "Local-first, provider-independent code knowledge graph for coding agents",
+  "keywords": [
+    "code-graph",
+    "knowledge-graph",
+    "coding-agents",
+    "context",
+    "cli"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/royhendriks-dev/codebasetograph.git"
+  },
+  "bugs": {
+    "url": "https://github.com/royhendriks-dev/codebasetograph/issues"
+  },
+  "homepage": "https://github.com/royhendriks-dev/codebasetograph#readme",
   "type": "module",
   "private": true,
   "bin": {
     "cbtg": "dist/cli.js"
   },
+  "files": [
+    "dist",
+    "!dist/test",
+    "lang",
+    "skills",
+    "README.md",
+    "CHANGELOG.md"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test \"dist/test/*.test.js\"",
     "cbtg": "node dist/cli.js",
-    "test:coverage": "npm run build && node -e \"require('fs').mkdirSync('coverage',{recursive:true})\" && node --test --experimental-test-coverage --test-coverage-exclude=\"dist/test/**\" --test-coverage-lines=80 --test-coverage-branches=80 --test-coverage-functions=80 --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=coverage/lcov.info \"dist/test/*.test.js\""
+    "test:coverage": "npm run build && node -e \"require('fs').mkdirSync('coverage',{recursive:true})\" && node --test --experimental-test-coverage --test-coverage-exclude=\"dist/test/**\" --test-coverage-lines=80 --test-coverage-branches=80 --test-coverage-functions=80 --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=coverage/lcov.info \"dist/test/*.test.js\"",
+    "prepack": "npm run build"
   },
   "engines": {
     "node": ">=20"

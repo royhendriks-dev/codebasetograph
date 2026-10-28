@@ -25,18 +25,21 @@ discover -> parse (per file) -> link (all files) -> graph.json -> query -> CLI /
 
 | Module | Responsibility |
 |---|---|
-| `discover.ts` | Walk repo, default exclusions, simple `.gitignore`, skip `.d.ts`/minified/large files, no symlinks |
+| `discover.ts` | Walk repo, default exclusions, `.gitignore` (nested files, negation, `*`/`?`/`**`, last rule wins), skip `.d.ts`/minified/large files, no symlinks |
 | `parse.ts` | TypeScript compiler API (parse only, nothing executed): imports, re-exports, `require`, dynamic `import('literal')`, top-level declarations, Angular decorator roles and selectors |
 | `build.ts` | Per-file cache by content hash, linking, atomic write of `.cbtg/graph.json` |
 | `query.ts` | find, deps, dependents, bounded related walk, budgeted task context (names + commit history) |
 | `history.ts` | `git log` (read-only) to per-commit message words and touched indexed files, stored in the graph |
 | `view.ts` | Self-contained HTML explorer generated from the graph: search, symbols per file, imports / imported-by with evidence badges. Repo-derived text is set via `textContent` (untrusted input). This is the list view for reading |
 | `viewGraph.ts` | `cbtg view --graph`: drawn file graph for humans (agents use the queries). One self-contained page, no libraries or network: canvas, in-page force layout, nodes = linked files coloured and pulled together per folder cluster (project folder + innermost folder, generic parts like `src`/`main`/`java` skipped; cluster names drawn on the map), edges coloured by evidence, click highlights neighbours and lists the file's links and symbols (max 40), search, drag/zoom. The layout uses grid-based repulsion and runs a few iterations per animation frame, so the page stays responsive and draws while it settles (1,500 synthetic files: about 2.5 s in headless Chromium; checked with a screenshot, not a usability test). File-to-file edges only, duplicates collapsed, truncated to the most connected `--max-nodes` (default 400) files and the page says so. Names are drawn with canvas or `textContent`, never `innerHTML` |
+| `treesitter.ts` | Generic tree-sitter extractor: a language is a table (grammar, extensions, declaration node types, import collector); loading, walking and fact building are shared. Python (`py-1`): classes, methods, functions, module-level constants/variables, `import`/`from` (incl. relative, aliased, wildcard). Go (`go-1`): structs, interfaces, type aliases, functions, methods as `Recv.Method`, `var`/`const`, imports. C# (`cs-1`): namespaces (stored in `namespaces`), classes/interfaces/structs/records/enums incl. nested, methods, constructors, properties, `using` (static, alias). Export rule per language: Python no leading `_`, Go capital letter, C# `public`. Grammars come from `tree-sitter-wasms` (already a dependency, no new install) and load lazily, only when a repo has such files; strings and comments are never read |
+| `linkTreeSitter.ts` | Links for those languages. Python: relative imports from the file directory and absolute ones from the repo root are `resolved`; a unique suffix match (src layout) is `inferred`; the rest is a package node. Go: the import path ending in a repo directory (longest wins) links that directory's non-test files (`inferred`). C#: `using` links files that declare the namespace (`inferred`); `System`/`Microsoft` stay package nodes. No call graph, no inheritance edges, no test-file links for these languages yet |
 | `java.ts` | Java via tree-sitter (WASM grammar, parse only): package, imports (incl. static and wildcard), top-level types with annotations (e.g. `@Path`, `@ApplicationScoped`), methods, `extends`/`implements` |
 | `config.ts` | Dockerfile (stages, base images), YAML (GitHub workflows: jobs and `uses`; docker compose: services, images, build context; Kubernetes: kind/name, images and Secret/ConfigMap/PVC/ServiceAccount references; Kustomize: resources, bases, components and patches), SQL (`CREATE TABLE/INDEX/VIEW/TYPE` by regex) and nginx `.conf` (location, upstream, server_name and `add_header` names by line regex). Uses the `yaml` package (ISC, pinned, no code execution) |
+| `words.ts` | Task words for `context` and `bench`: English stop words in code, stop words and glossary of the task language in a language pack (`lang/nl.json` is the default, `--lang nl\|none\|file.json`), plus optional `--synonyms` |
 | `cli.ts` | `cbtg` commands |
 
-Language choice: TypeScript/Node, because the TS compiler API is the most accurate parser for TS/Angular and matches the primary stack. Python+tree-sitter was not evaluated yet; revisit when more languages are needed.
+Language choice: TypeScript/Node, because the TS compiler API is the most accurate parser for TS/Angular and matches the primary stack. Python+tree-sitter was not evaluated; more languages are added through `treesitter.ts` (a table per language) instead of per-language code. Python, Go and C# are in; Rust, Kotlin, PHP, Ruby and Swift grammars exist in `tree-sitter-wasms` but are not added. Not measured: how much these languages improve `context` results (use `cbtg bench` on a repo in that language).
 
 ## Data model
 
@@ -79,7 +82,8 @@ Per-file facts are cached by SHA-256 of content. Changed files are re-parsed, de
 
 - TypeScript: file-level imports and top-level declarations only: no call graph, no member-level symbols, duplicate names in one file collapse to one node. Java: see above.
 - No package `exports`, monorepo workspace package names, or Angular DI/router edges. Imports that no tsconfig rule covers show as `inferred` packages.
-- `.gitignore` support is partial (no negation, no nested files).
+- `.gitignore` support covers the common syntax (nested files, `!negation`, `*`, `?`, `**`, anchoring) but not character classes (`[ab]`), `.git/info/exclude` or the global git ignore file.
+- Not on npm yet: the tarball is prepared (`files`, `prepack`, test) but `private: true` stays until a license is chosen.
 - Context ranking is name matching plus commit history (see below). Measured with `cbtg bench --from-git`; not measured is whether an agent finishes tasks better.
 - Only tests in `src/test` were run, on small synthetic fixtures. **No larger real-world repository and no token benchmark has been run yet.**
 

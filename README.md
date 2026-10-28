@@ -22,7 +22,7 @@ Similar tools were studied as research reference only. Their general ideas infor
 
 ## Status
 
-Version 1.0.0 (see [CHANGELOG.md](CHANGELOG.md)). A TypeScript core exists (discovery, TS/JS and Java import and declaration extraction, JSON graph, queries, CLI). Branches: `main` (releases) and `develop` (work). See [docs/design.md](docs/design.md) for scope and known limits. Prior-art research (Phase 1) is only partially done.
+Version 1.0.0 (see [CHANGELOG.md](CHANGELOG.md)). A TypeScript core exists (discovery, TS/JS and Java import and declaration extraction, a generic tree-sitter extractor with Python, Go and C#, JSON graph, queries, CLI). Branches: `main` (releases) and `develop` (work). See [docs/design.md](docs/design.md) for scope and known limits. Prior-art research (Phase 1) is only partially done.
 
 ## Quick start
 
@@ -40,6 +40,23 @@ npm test
 ```
 
 Agents: see [AGENTS.md](AGENTS.md) and [skills/codebasetograph/SKILL.md](skills/codebasetograph/SKILL.md). The instructions are provider-neutral; to use the tool in another project see [Install as a skill](#install-as-a-skill).
+
+## npm package (prepared, not published)
+
+`package.json` is ready for `npm publish`: `files` limits the tarball to `dist/` (without the tests), `lang/`, `skills/`, the README and the changelog, `prepack` builds first, and a test checks the tarball content (`npm pack --dry-run`). The package is still `"private": true`, so a publish is refused until the owner decides. To publish: choose a license and add a `license` field and `LICENSE` file, remove `"private": true`, and run `npm publish` after a release on `main` (use `npm publish --provenance` from CI or `--access public` for a scoped name). Until then `git clone` plus `npm install && npm run build && npm link` is the way to install.
+
+## Task language
+
+`context` and `bench` match the words of your task against file and symbol names. Tasks are often written in another language than the code, so cbtg maps task words with a language pack (stop words plus a small glossary). The word lists are data, not code: the built-in Dutch pack is [lang/nl.json](lang/nl.json) and stays the default, so nothing changes for existing users.
+
+```
+cbtg context "<task>" --lang nl                 # default: the built-in Dutch pack
+cbtg context "<task>" --lang none               # no pack, only English stop words
+cbtg context "<task>" --lang my-pack.json       # your own language, see below
+cbtg context "<task>" --synonyms words.json     # extra single words on top of the pack
+```
+
+A pack is a JSON file `{ "stopwords": ["der", "die"], "glossary": { "anmelden": ["login"] } }` (both keys optional). `--lang` also works for `bench`. Packs next to `lang/nl.json` can be selected by their two- or three-letter name.
 
 ## Branches and releases
 
@@ -88,6 +105,7 @@ git add .cbtg/graph.json .cbtg/.gitignore .gitattributes AGENTS.md .github/workf
 
 - `.cbtg/graph.json` is written as valid JSON with one file, node and edge per line in a fixed order, so a change shows up as a few changed lines instead of one 800 KB line. Re-indexing an unchanged repository changes nothing.
 - `.gitattributes` marks it `linguist-generated` (collapsed in GitHub's PR view) and `merge=binary`, so a conflict never leaves broken JSON: keep either side and run `cbtg index`.
+- Indexing respects `.gitignore` files in the repo root and in subfolders (including `!negation`; a deeper file overrides a shallower one). `.git/info/exclude` and your global ignore file are not read.
 - `.cbtg/.gitignore` keeps the HTML views and temp files out; only `graph.json` is committed.
 - The workflow `.github/workflows/cbtg-index.yml` runs `cbtg index` on every pull request from the same repository and commits a changed graph to the PR branch. Pull requests from forks and from Dependabot (read-only token) are not pushed to; there an agent runs `cbtg index` itself (it only re-parses changed files). A push with the default `GITHUB_TOKEN` does not start CI on the bot's commit (the runs wait for "Approve and run"); to make CI run, create a fine-grained token with *Contents: Read and write* on that repository only and store it as the repository secret `CBTG_PUSH_TOKEN`. Without the secret the workflow falls back to the default token. It clones cbtg from `--cbtg-repo` (default this repository) at `--cbtg-ref` (default `main`): pin a commit SHA there for a repository you care about, because that code runs with write access to the PR branch.
 - `cbtg install git --remove` undoes it (it does not delete the committed graph). The privacy note below still applies: the graph lists paths and names, so commit it only where the source is already as visible.
