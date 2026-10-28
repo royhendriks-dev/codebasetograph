@@ -23,6 +23,23 @@ export function dependents(g: Graph, path: string): GraphEdge[] {
   return g.edges.filter((e) => e.to === fileId(path) && LINK_KINDS.has(e.kind));
 }
 
+/**
+ * One output line per linked file and evidence level: a file that imports the same module twice (a normal and a type
+ * import, or a static and a dynamic one) is listed once with every line number, `a.ts:3,18 [resolved]`.
+ * Unresolved links stay apart per specifier, since each one is a different missing target.
+ */
+export function linkLines(edges: GraphEdge[], side: "from" | "to"): string[] {
+  const groups = new Map<string, { target: string; evidence: string; lines: number[]; specifier?: string }>();
+  for (const e of edges) {
+    const target = e[side].replace(/^(file|pkg):/, "");
+    const key = `${target}\u0000${e.evidence}\u0000${e.evidence === "unresolved" ? e.specifier ?? "" : ""}`;
+    const g = groups.get(key) ?? { target, evidence: e.evidence, lines: [], specifier: e.evidence === "unresolved" ? e.specifier : undefined };
+    if (e.line !== undefined && !g.lines.includes(e.line)) g.lines.push(e.line);
+    groups.set(key, g);
+  }
+  return [...groups.values()].map((g) => `${g.target}${g.lines.length ? ":" + g.lines.sort((a, b) => a - b).join(",") : ""} [${g.evidence}]${g.specifier !== undefined ? ` (${g.specifier})` : ""}`);
+}
+
 /** Bounded breadth-first walk over resolved import edges, in both directions. */
 export function related(g: Graph, path: string, depth = 1): Array<{ path: string; distance: number }> {
   const seen = new Map<string, number>([[path, 0]]);

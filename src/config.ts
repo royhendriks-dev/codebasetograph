@@ -21,6 +21,11 @@ function imageName(image: string): string | undefined {
   return v.includes("${") || v.includes("$(") ? undefined : strip(v);
 }
 
+/** Compose interpolation `${VAR:-default}` / `${VAR-default}`: without the variable the default applies, so that is the path we can link. `${VAR}` stays as is. */
+export function withDefaults(v: string): string {
+  return v.replace(/\$\{[A-Za-z_]\w*:?-([^}]*)\}/g, "$1");
+}
+
 function plain(node: unknown, doc: Document): unknown {
   return node && typeof (node as { toJS?: unknown }).toJS === "function" ? (node as { toJS: (d: Document) => unknown }).toJS(doc) : node;
 }
@@ -251,11 +256,12 @@ function parseComposeService(c: YamlCtx, name: string, line: number, cfg: Record
   // with `build` the image is only the tag of the result, not a dependency
   const img = typeof cfg.image === "string" && b === undefined ? imageName(cfg.image) : undefined;
   if (img) addImport(c, img, ["image"], line, "image");
-  const ctx = typeof b === "string" ? b : asObj(b)?.context;
-  if (typeof ctx !== "string") return;
-  const df = asObj(b)?.dockerfile;
+  const rawCtx = typeof b === "string" ? b : asObj(b)?.context;
+  if (typeof rawCtx !== "string") return;
+  const rawDf = asObj(b)?.dockerfile;
+  const ctx = withDefaults(rawCtx);
   const dir = path.posix.normalize(path.posix.join(path.posix.dirname(c.relPath), ctx));
-  addImport(c, path.posix.join(dir, typeof df === "string" ? df : "Dockerfile"), ["build"], line, "path");
+  addImport(c, path.posix.join(dir, typeof rawDf === "string" ? withDefaults(rawDf) : "Dockerfile"), ["build"], line, "path");
 }
 
 function parseCompose(c: YamlCtx, services: YNode, doc: Document): void {
