@@ -2,6 +2,11 @@
 
 Alle noemenswaardige wijzigingen per release. Versies volgen [semver](https://semver.org/lang/nl/). De versie staat in `package.json`; de tag is `vX.Y.Z`.
 
+## [Unreleased]
+
+### Toegevoegd
+- Generieke tree-sitter-extractor (`src/treesitter.ts`) met Python, Go en C#: declaraties, methoden en imports/`using`, plus koppelingen tussen bestanden (`src/linkTreeSitter.ts`). De grammatica's komen uit het bestaande `tree-sitter-wasms` en worden pas geladen als er zulke bestanden zijn.
+
 ## [1.0.0] - 2026-10-25
 
 Eerste release van `cbtg`, een lokale, provideronafhankelijke code-graph voor coding agents.

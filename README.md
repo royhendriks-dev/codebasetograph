@@ -22,7 +22,7 @@ Similar tools were studied as research reference only. Their general ideas infor
 
 ## Status
 
-Version 1.0.0 (see [CHANGELOG.md](CHANGELOG.md)). A TypeScript core exists (discovery, TS/JS and Java import and declaration extraction, JSON graph, queries, CLI). Branches: `main` (releases) and `develop` (work). See [docs/design.md](docs/design.md) for scope and known limits. Prior-art research (Phase 1) is only partially done.
+Version 1.0.0 (see [CHANGELOG.md](CHANGELOG.md)). A TypeScript core exists (discovery, TS/JS and Java import and declaration extraction, a generic tree-sitter extractor with Python, Go and C#, JSON graph, queries, CLI). Branches: `main` (releases) and `develop` (work). See [docs/design.md](docs/design.md) for scope and known limits. Prior-art research (Phase 1) is only partially done.
 
 ## Quick start
 
