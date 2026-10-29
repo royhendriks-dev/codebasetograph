@@ -79,21 +79,37 @@ export const GIT_END = "# cbtg:end";
 export const WORKFLOW_FILE = ".github/workflows/cbtg-index.yml";
 export const DEFAULT_CBTG_REPO = "https://github.com/royhendriks-dev/codebasetograph.git";
 
-/** `merge=binary`: a conflicting graph is never half-merged into broken JSON; keep either side and run `cbtg index`. */
+/**
+ * `merge=binary`: a conflicting graph or view is never half-merged into broken JSON or HTML; keep either side and run
+ * `cbtg index` (or wait for the next views run). `linguist-generated` collapses them in GitHub's diff view. GRAPH.md stays
+ * visible, it is the page to look at.
+ */
 const GIT_ATTRIBUTES = `${GIT_START}
 .cbtg/graph.json linguist-generated=true merge=binary
+.cbtg/graph.html linguist-generated=true merge=binary
+.cbtg/graph-map.html linguist-generated=true merge=binary
+.cbtg/overview.json linguist-generated=true merge=binary
+.cbtg/GRAPH.md merge=binary
 ${GIT_END}
 `;
 
-/** Keeps the other generated files in `.cbtg/` (HTML views, temp files) out of git; only the graph is committed. */
-const CBTG_GITIGNORE = "*\n!.gitignore\n!graph.json\n";
+/** Keeps temp files in `.cbtg/` out of git; the graph and the views the workflow writes are committed. */
+const CBTG_GITIGNORE = "*\n!.gitignore\n!graph.json\n!graph.html\n!graph-map.html\n!overview.json\n!GRAPH.md\n";
 
-export function workflow(repo: string, ref: string): string {
+/** Views are files that change with almost every merge, so the workflow writes them only after a merge, not on every pull request. */
+const VIEW_FILES = ".cbtg/graph.json .cbtg/graph.html .cbtg/graph-map.html .cbtg/overview.json .cbtg/GRAPH.md";
+
+export function workflow(repo: string, ref: string, viewsBranch = "main"): string {
+  if (!/^[A-Za-z0-9._/-]+$/.test(viewsBranch)) throw new Error(`invalid branch name: ${viewsBranch}`);
   return `# Managed by \`cbtg install git\`. Keeps .cbtg/graph.json current on every pull request, so the agent that picks up a PR has the newest index.
+# After every merge to ${viewsBranch} it also writes the views (GRAPH.md, overview.json, graph.html, graph-map.html) in one commit on ${viewsBranch},
+# so pull requests do not carry large view diffs.
 name: cbtg graph
 
 on:
   pull_request:
+  push:
+    branches: [${viewsBranch}]
 
 permissions:
   contents: write
@@ -106,12 +122,13 @@ jobs:
   index:
     # Pull requests from forks cannot be pushed to; those run \`cbtg index\` themselves.
     # Dependabot gets a read-only token, so \`git push\` would fail there.
-    if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+    # On push (a merge to ${viewsBranch}) the job writes the views; a commit by this workflow itself only touches .cbtg/ and changes nothing.
+    if: github.event_name == 'push' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: \${{ github.event.pull_request.head.ref }}
+          ref: \${{ github.event.pull_request.head.ref || github.ref_name }}
           # Full history: \`cbtg index\` ranks files by the words of earlier commits that touched them.
           fetch-depth: 0
           # A push with the default token does not start CI on the new commit. When the repository secret
@@ -131,9 +148,17 @@ jobs:
           (cd "$RUNNER_TEMP/cbtg" && npm ci --no-audit --no-fund && npm run build)
       - name: Update the graph
         run: node "$RUNNER_TEMP/cbtg/dist/cli.js" index
-      - name: Commit the graph when it changed
+      - name: Write the views (only after a merge)
+        if: github.event_name == 'push'
         run: |
-          git add .cbtg/graph.json
+          node "$RUNNER_TEMP/cbtg/dist/cli.js" view
+          node "$RUNNER_TEMP/cbtg/dist/cli.js" view --graph
+          node "$RUNNER_TEMP/cbtg/dist/cli.js" view --overview
+      - name: Commit when something changed
+        env:
+          FILES: \${{ github.event_name == 'push' && '${VIEW_FILES}' || '.cbtg/graph.json' }}
+        run: |
+          git add $FILES
           git diff --cached --quiet && exit 0
           git config user.name "cbtg[bot]"
           git config user.email "cbtg-bot@users.noreply.github.com"
@@ -154,9 +179,10 @@ const gitBlock = () => new RegExp(`${escape(GIT_START)}[\\s\\S]*?${escape(GIT_EN
 
 /**
  * Makes the graph part of the repository: it is no longer hidden locally, `.gitattributes` marks it as generated,
- * and a workflow keeps it current on pull requests. Run `cbtg index` once and commit `.cbtg/graph.json`.
+ * and a workflow keeps it current on pull requests and writes the views after each merge to `viewsBranch` (default main).
+ * Run `cbtg index` once and commit `.cbtg/graph.json`.
  */
-export async function installGit(root: string, opts: { repo?: string; ref?: string } = {}): Promise<InstallResult[]> {
+export async function installGit(root: string, opts: { repo?: string; ref?: string; viewsBranch?: string } = {}): Promise<InstallResult[]> {
   root = path.resolve(root);
   const attrFile = path.join(root, ".gitattributes");
   const before = await fs.readFile(attrFile, "utf8").catch(() => undefined);
@@ -166,7 +192,7 @@ export async function installGit(root: string, opts: { repo?: string; ref?: stri
   const results = [
     await writeIfChanged(attrFile, attrText, "git"),
     await writeIfChanged(path.join(root, ".cbtg", ".gitignore"), CBTG_GITIGNORE, "git"),
-    await writeIfChanged(path.join(root, WORKFLOW_FILE), workflow(opts.repo ?? DEFAULT_CBTG_REPO, opts.ref ?? "main"), "git"),
+    await writeIfChanged(path.join(root, WORKFLOW_FILE), workflow(opts.repo ?? DEFAULT_CBTG_REPO, opts.ref ?? "main", opts.viewsBranch), "git"),
     await installAgents(root),
   ];
   await dropExcludeLine(root);
