@@ -1,4 +1,5 @@
 import type { Graph, GraphEdge, GraphNode } from "./model.js";
+import { componentBundle } from "./angular.js";
 import { taskWords } from "./words.js";
 
 const fileId = (p: string) => `file:${p}`;
@@ -123,6 +124,8 @@ export interface ContextItem { path: string; lines?: [number, number]; why: stri
 const SYMBOLS_PER_FILE = 3;
 /** Share of a top file's score that a directly linked file gets, by evidence of the link. */
 const NEIGHBOUR_SHARE: Record<string, number> = { resolved: 0.5, inferred: 0.3 };
+/** Template, style and spec next to a matching component join the ranking with this share of its score. */
+const BUNDLE_SHARE = 0.4;
 
 /**
  * Files ranked by the words of earlier commits that touched them. Commit messages are written in the team's own words
@@ -190,16 +193,27 @@ export function context(g: Graph, task: string, budgetTokens = 800, synonyms: Re
       if (!fileScore.has(q) && !via.has(q)) via.set(q, p);
     }
   }
+  const paths = Object.keys(g.files);
+  for (const p of byScore(fileScore).slice(0, 5)) {
+    for (const q of componentBundle(paths, p)) {
+      nameScore.set(q, (nameScore.get(q) ?? 0) + fileScore.get(p)! * BUNDLE_SHARE * (isTestPath(q) ? 0.5 : 1));
+      if (!fileScore.has(q) && !via.has(q)) via.set(q, p);
+    }
+  }
   const history = historyRanking(g, words);
   const ranking = history.size ? fuse([byScore(nameScore), byScore(new Map([...history].map(([p, h]) => [p, h.score])))]) : byScore(nameScore);
   const items: ContextItem[] = [];
   for (const p of ranking) {
     const own = matches.get(p);
     if (own) {
-      for (const [, n] of own.slice(0, SYMBOLS_PER_FILE))
-        items.push({ path: p, lines: n.lines, why: `${n.kind === "symbol" ? n.detail + " " : "file "}${n.name}${n.exported ? " (exported)" : ""} matches task words`, evidence: "extracted" });
+      // One item per file: the best symbols on a single line, so one large file does not eat the budget.
+      const top = own.slice(0, SYMBOLS_PER_FILE).map(([, n]) => n);
+      const names = top.map((n) => `${n.kind === "symbol" ? n.detail + " " : "file "}${n.name}${n.exported ? "*" : ""}${n.kind === "symbol" && n.lines ? `:${n.lines[0]}-${n.lines[1]}` : ""}`);
+      const more = own.length - top.length;
+      items.push({ path: p, lines: top[0].lines, why: `${names.join(", ")}${more > 0 ? ` (+${more} more)` : ""} match task words`, evidence: "extracted" });
     } else if (via.has(p)) {
-      items.push({ path: p, why: `imports or is imported by ${via.get(p)}`, evidence: "resolved" });
+      const bundled = componentBundle(paths, via.get(p)!).includes(p) && !dependencies(g, via.get(p)!).concat(dependents(g, via.get(p)!)).some((e) => e.from === fileId(p) || e.to === fileId(p));
+      items.push(bundled ? { path: p, why: `template, style or spec of ${via.get(p)}`, evidence: "inferred" } : { path: p, why: `imports or is imported by ${via.get(p)}`, evidence: "resolved" });
     } else if (history.has(p)) {
       items.push({ path: p, why: `changed in earlier commits about ${[...history.get(p)!.words].slice(0, 3).join(", ")}`, evidence: "inferred" });
     }
@@ -208,7 +222,7 @@ export function context(g: Graph, task: string, budgetTokens = 800, synonyms: Re
   const shown: ContextItem[] = [];
   let used = 0, truncated = false;
   for (const it of items) {
-    const line = `- ${it.path}${it.lines ? `:${it.lines[0]}-${it.lines[1]}` : ""} [${it.evidence}] ${it.why}`;
+    const line = `- ${it.path} [${it.evidence}] ${it.why}`;
     const cost = Math.ceil(line.length / 4);
     if (used + cost > budgetTokens) { truncated = true; break; }
     used += cost; lines.push(line); shown.push(it);

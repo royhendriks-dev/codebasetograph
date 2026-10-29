@@ -129,6 +129,12 @@ Measured with `cbtg bench --from-git` (71 to 100 past pull requests per reposito
 
 Only finding is measured, not whether an agent finishes the task better. Task titles and commit messages are partly written by the same people and agents, which favours the history; the gain held when tasks were cut to their first three words (portfolio: 28% to 46%, measured with the prototype of this ranking). In the two small repositories plain grep still finds more.
 
+## Context output
+
+`cbtg context` prints one line per file: the best (at most three) matching symbols with their line range, and `(+n more)` for the rest, for example `- src/db.ts [extracted] class Db*:3-40, function open:42-50 (+2 more) match task words`. `*` marks an exported symbol. For an Angular component (`x.component.ts`) the template, style and spec next to it (`x.component.html`, `.scss`/`.css`, `.spec.ts`) follow it in the ranking with part of its score and are shown as `[inferred] template, style or spec of ...`: a naming convention, not a proven link. `cbtg deps` and `cbtg dependents` list a file that imports the same module more than once as a single line with every line number.
+
+Measured with `cbtg bench --from-git` before and after this change (small repositories only, so differences are within noise): recipes-for-me 15 tasks of which 9 usable: MRR with history 0.44 to 0.50, without history unchanged (0.41); codebasetograph: MRR 0.72 and 0.60 unchanged, recall unchanged, opened-file tokens 12964 to 12917 with history and 9507 to 9457 without. No improvement in finding is claimed; the portfolio repository was not available for this run.
+
 ## Keeping the graph fresh
 
 `cbtg watch [--root dir] [--graph-dir dir] [--debounce ms]` indexes once and then re-indexes (incrementally: only changed files are parsed) after every file change, until Ctrl+C. Changes inside `.git`, `node_modules`, build output and the graph directory are ignored; runs never overlap. It uses `fs.watch` with `recursive`, which needs Node 20 or newer; on a network drive or in some containers file events can be missing, then re-run `cbtg index`.

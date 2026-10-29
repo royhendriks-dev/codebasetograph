@@ -6,8 +6,7 @@ import * as path from "node:path";
 import { indexRepo } from "../build.js";
 import { componentBundle } from "../angular.js";
 import { withDefaults } from "../config.js";
-import { addNeighbours, renderFileLine, type FileHit } from "../contextFormat.js";
-import { dependencies, linkLines } from "../query.js";
+import { context, dependencies, linkLines } from "../query.js";
 
 async function fixture(files: Record<string, string>): Promise<string> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "cbtg-"));
@@ -57,20 +56,20 @@ test("componentBundle finds template, style and spec next to a component .ts onl
   assert.deepEqual(componentBundle(paths, "src/a/x.component.html"), []);
 });
 
-test("addNeighbours gives neighbours and the bundle a share of the score; renderFileLine shows at most 3 symbols", async () => {
+test("context: one line per file with at most 3 symbols, and the Angular bundle follows its component", async () => {
   const root = await fixture({
-    "src/x.component.ts": `import { S } from './s.service';\nexport class XComponent {}\n`,
-    "src/x.component.html": `<p></p>`,
-    "src/s.service.ts": `export class S {}\n`,
+    "src/panel.component.ts": `export class PanelComponent {}\nexport function zebraA() {}\nexport function zebraB() {}\nexport function zebraC() {}\nexport function zebraD() {}\n`,
+    "src/panel.component.html": `<p></p>`,
+    "src/panel.component.scss": `p {}`,
+    "src/other.ts": `export const x = 1;\n`,
   });
   const { graph } = await indexRepo(root);
-  const hit: FileHit = { path: "src/x.component.ts", score: 10, symbols: [], fileMatch: true, evidence: "extracted", why: "" };
-  const out = addNeighbours(graph, [hit]);
-  assert.deepEqual(out.map((h) => h.path), ["src/x.component.ts", "src/s.service.ts", "src/x.component.html"]);
-  assert.equal(out[1].score, 5);
-  assert.equal(out[1].evidence, "resolved");
-  assert.equal(out[2].evidence, "inferred");
-  const syms = ["a", "b", "c", "d", "e"].map((name, i) => ({ id: `sym:p#${name}`, kind: "symbol" as const, name, path: "p", detail: "function", lines: [i + 1, i + 2] as [number, number], exported: i === 0 }));
-  assert.equal(renderFileLine({ path: "p", score: 1, symbols: syms, fileMatch: false, evidence: "extracted", why: "" }), "- p [extracted] function a:1*, function b:2, function c:3 (+2 more)");
-  assert.equal(renderFileLine(out[1]), "- src/s.service.ts [resolved] linked with src/x.component.ts");
+  const r = context(graph, "zebraA");
+  const first = r.text.split("\n").filter((l) => l.startsWith("- src/panel.component.ts"));
+  assert.equal(first.length, 1, "file listed once");
+  assert.match(first[0], /\(\+\d+ more\)/);
+  assert.equal((first[0].match(/function|class/g) ?? []).length, 3);
+  assert.match(r.text, /- src\/panel\.component\.html \[inferred\] template, style or spec of src\/panel\.component\.ts/);
+  assert.ok(r.text.includes("panel.component.scss"));
+  assert.ok(!r.text.includes("other.ts"));
 });

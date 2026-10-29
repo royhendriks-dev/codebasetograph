@@ -93,7 +93,7 @@ test("query: find, dependents, context with budget", async () => {
   assert.deepEqual(dependents(graph, "src/app/user.service.ts").map((e) => e.from).sort(),
     ["file:src/app/index.ts", "file:src/app/user-list.component.ts"]);
   const c = context(graph, "change how the user service loads data", 800);
-  assert.match(c.text, /user\.service\.ts:\d+-\d+/);
+  assert.match(c.text, /UserService\*?:\d+-\d+/);
   assert.match(c.text, /unresolved import/);
   const tiny = context(graph, "user service", 5);
   assert.equal(tiny.truncated, true);
