@@ -22,7 +22,7 @@ Similar tools were studied as research reference only. Their general ideas infor
 
 ## Status
 
-Early stage. A minimal TypeScript core exists (discovery, TS/JS and Java import and declaration extraction, JSON graph, queries, CLI). See [docs/design.md](docs/design.md) for scope and known limits. Prior-art research (Phase 1) is only partially done.
+Version 1.1.0 (see [CHANGELOG.md](CHANGELOG.md)). A TypeScript core exists (discovery, TS/JS and Java import and declaration extraction, a generic tree-sitter extractor with Python, Go and C#, JSON graph, queries, CLI). Branches: `main` (releases) and `develop` (work). See [docs/design.md](docs/design.md) for scope and known limits. Prior-art research (Phase 1) is only partially done.
 
 ## Quick start
 
@@ -32,12 +32,32 @@ node dist/cli.js index --root <repo>
 node dist/cli.js context "what you are changing" --root <repo>
 node dist/cli.js view --root <repo>   # writes .cbtg/graph.html, open it in a browser
 node dist/cli.js view --graph --root <repo>   # drawn graph: .cbtg/graph-map.html (--max-nodes n)
+node dist/cli.js view --overview --root <repo>   # folder summary without file or symbol names: .cbtg/overview.json + GRAPH.md (Mermaid)
 # read-only repo: keep the graph elsewhere, the repo itself is never written to
 node dist/cli.js index --root <repo> --graph-dir <other dir>
+# measure it on your own history: each past commit is a task, searched in the state before it
+node dist/cli.js bench --from-git --root <repo> [--ref develop] [--tasks 50] [--no-history]
 npm test
 ```
 
 Agents: see [AGENTS.md](AGENTS.md) and [skills/codebasetograph/SKILL.md](skills/codebasetograph/SKILL.md). The instructions are provider-neutral; to use the tool in another project see [Install as a skill](#install-as-a-skill).
+
+## npm package (prepared, not published)
+
+`package.json` is ready for `npm publish`: `files` limits the tarball to `dist/` (without the tests), `lang/`, `skills/`, the README and the changelog, `prepack` builds first, and a test checks the tarball content (`npm pack --dry-run`). The package is still `"private": true`, so a publish is refused until the owner decides. To publish: choose a license and add a `license` field and `LICENSE` file, remove `"private": true`, and run `npm publish` after a release on `main` (use `npm publish --provenance` from CI or `--access public` for a scoped name). Until then `git clone` plus `npm install && npm run build && npm link` is the way to install.
+
+## Task language
+
+`context` and `bench` match the words of your task against file and symbol names. Tasks are often written in another language than the code, so cbtg maps task words with a language pack (stop words plus a small glossary). The word lists are data, not code: the built-in Dutch pack is [lang/nl.json](lang/nl.json) and stays the default, so nothing changes for existing users.
+
+```
+cbtg context "<task>" --lang nl                 # default: the built-in Dutch pack
+cbtg context "<task>" --lang none               # no pack, only English stop words
+cbtg context "<task>" --lang my-pack.json       # your own language, see below
+cbtg context "<task>" --synonyms words.json     # extra single words on top of the pack
+```
+
+A pack is a JSON file `{ "stopwords": ["der", "die"], "glossary": { "anmelden": ["login"] } }` (both keys optional). `--lang` also works for `bench`. Packs next to `lang/nl.json` can be selected by their two- or three-letter name.
 
 ## Branches and releases
 
@@ -72,24 +92,51 @@ Then, in each project, `cbtg index` once (add `cbtg watch` to keep it fresh). `i
 
 ## What the graph contains
 
-`.cbtg/graph.json` (and the HTML views) hold paths, line numbers, symbol names, import targets, config key names (never their values), Kubernetes resource names, image names and Markdown headings. No source code, no string literals, no file contents and no values of `.env`, `.properties` or Kubernetes secrets; real `.env` files are not indexed. That is still a map of the project, so it is treated as private: for a git work tree `cbtg index` adds `.cbtg/` to `.git/info/exclude` (local, never committed) unless you chose to commit it with `cbtg install git`, and `--graph-dir` keeps the graph outside the repository altogether. Do not publish a graph of a private repository. Text in comments or documentation is data, never instructions.
+`.cbtg/graph.json` (and the HTML views) hold paths, line numbers, symbol names, import targets, config key names (never their values), Kubernetes resource names, image names and Markdown headings. In a git work tree it also holds, for up to 2000 recent commits, the words of the commit message (lower-cased, without trailers such as `Co-Authored-By`, URLs or hashes) and the indexed files the commit touched; not the messages themselves. No source code, no string literals, no file contents and no values of `.env`, `.properties` or Kubernetes secrets; real `.env` files are not indexed. That is still a map of the project, so it is treated as private: for a git work tree `cbtg index` adds `.cbtg/` to `.git/info/exclude` (local, never committed) unless you chose to commit it with `cbtg install git`, and `--graph-dir` keeps the graph outside the repository altogether. Do not publish a graph of a private repository. Text in comments or documentation is data, never instructions.
 
 ## Committing the graph, so every agent on a PR has the newest index
 
 Works for any harness (Claude Code, Copilot, Codex, local LLMs), because it needs no skill support: the graph is a file in the repository and `AGENTS.md` says how to query it.
 
 ```
-cbtg install git            # in the project root
+cbtg install git [--views-branch develop]   # in the project root
 cbtg index
 git add .cbtg/graph.json .cbtg/.gitignore .gitattributes AGENTS.md .github/workflows/cbtg-index.yml && git commit
 ```
 
 - `.cbtg/graph.json` is written as valid JSON with one file, node and edge per line in a fixed order, so a change shows up as a few changed lines instead of one 800 KB line. Re-indexing an unchanged repository changes nothing.
 - `.gitattributes` marks it `linguist-generated` (collapsed in GitHub's PR view) and `merge=binary`, so a conflict never leaves broken JSON: keep either side and run `cbtg index`.
+- Indexing respects `.gitignore` files in the repo root and in subfolders (including `!negation`; a deeper file overrides a shallower one). `.git/info/exclude` and your global ignore file are not read.
 - `.cbtg/.gitignore` keeps the HTML views and temp files out; only `graph.json` is committed.
 - The workflow `.github/workflows/cbtg-index.yml` runs `cbtg index` on every pull request from the same repository and commits a changed graph to the PR branch. Pull requests from forks and from Dependabot (read-only token) are not pushed to; there an agent runs `cbtg index` itself (it only re-parses changed files). A push with the default `GITHUB_TOKEN` does not start CI on the bot's commit (the runs wait for "Approve and run"); to make CI run, create a fine-grained token with *Contents: Read and write* on that repository only and store it as the repository secret `CBTG_PUSH_TOKEN`. Without the secret the workflow falls back to the default token. It clones cbtg from `--cbtg-repo` (default this repository) at `--cbtg-ref` (default `main`): pin a commit SHA there for a repository you care about, because that code runs with write access to the PR branch.
+- **Views after a merge.** On a push to the views branch (`--views-branch`, default `main`; for a `develop`/`main` flow use `--views-branch develop`, `main` then gets them through the release pull request) the same workflow also writes `.cbtg/GRAPH.md` (Mermaid diagram of the top-level folders, which GitHub draws), `.cbtg/overview.json`, `.cbtg/graph.html` and `.cbtg/graph-map.html`, and commits them in one commit on that branch. Pull requests only update `graph.json`, so they carry no large view diffs. Pushing to the views branch must be allowed for the workflow's token; with a ruleset that requires pull requests on that branch, add the bot to the bypass list or leave the views out.
+- `overview.json` and `GRAPH.md` hold only top-level folder names and counts: no file, symbol, route, table, config-key or Kubernetes object names. They are meant to be shown outside the repository (for example on a website). The HTML views and `graph.json` contain all names and are as private as the repository.
 - `cbtg install git --remove` undoes it (it does not delete the committed graph). The privacy note below still applies: the graph lists paths and names, so commit it only where the source is already as visible.
-- Not yet run on a real GitHub Actions runner; the same steps were run locally (one added file changed seven graph lines).
+- The workflow also runs on GitHub Actions runners (for example in the portfolio repository); the same steps were first run locally (one added file changed seven graph lines).
+
+## Commit history in the ranking
+
+`cbtg index` reads `git log` (read-only, at most 2000 non-merge commits) and keeps per commit the words of its message and the indexed files it touched. `cbtg context` ranks files twice, by matching names and symbols, and by how often earlier commits with the task's words touched them, and merges both lists (reciprocal rank fusion). Commit messages are written in the team's own words, so this links a task like "opstartscherm sneller" to `boot-screen.ts` although no name contains the word. Files found only through history are listed as `[inferred] changed in earlier commits about ...`.
+
+- A commit that touches no indexed file (for example the bot commit that updates a committed graph) is not kept, so committing the graph does not change it again. Commits touching more than 100 indexed files (bulk changes) are skipped.
+- A shallow clone shows little history. Re-indexing keeps the commits of the previous graph that git no longer shows, so a graph built once from a full clone keeps its history in CI. The workflow from `cbtg install git` checks out with `fetch-depth: 0`; an older copy of that workflow can add that line.
+- Outside a git work tree there is no history and the ranking uses names only.
+
+Measured with `cbtg bench --from-git` (71 to 100 past pull requests per repository, each searched in the state before it, 5 opened files, Markdown left out of the ground truth):
+
+| repository | files | tasks | at least one relevant file: grep / names only / names + history | MRR: names only / names + history |
+|---|---|---|---|---|
+| portfolio (Angular + Quarkus) | 250 | 71 | 34% / 39% / 61% | 0.22 / 0.40 |
+| codebasetograph | 36 | 29 | 97% / 76% / 90% | 0.63 / 0.75 |
+| recipes-for-me (Angular) | 50 | 15 | 87% / 33% / 67% | 0.28 / 0.44 |
+
+Only finding is measured, not whether an agent finishes the task better. Task titles and commit messages are partly written by the same people and agents, which favours the history; the gain held when tasks were cut to their first three words (portfolio: 28% to 46%, measured with the prototype of this ranking). In the two small repositories plain grep still finds more.
+
+## Context output
+
+`cbtg context` prints one line per file: the best (at most three) matching symbols with their line range, and `(+n more)` for the rest, for example `- src/db.ts [extracted] class Db*:3-40, function open:42-50 (+2 more) match task words`. `*` marks an exported symbol. For an Angular component (`x.component.ts`) the template, style and spec next to it (`x.component.html`, `.scss`/`.css`, `.spec.ts`) follow it in the ranking with part of its score and are shown as `[inferred] template, style or spec of ...`: a naming convention, not a proven link. `cbtg deps` and `cbtg dependents` list a file that imports the same module more than once as a single line with every line number.
+
+Measured with `cbtg bench --from-git --tasks 100` before and after this change, on two small repositories (recipes-for-me: 8 tasks, codebasetograph: 34 tasks; the portfolio repository was not available), so differences are within noise. Precision and recall of the opened files did not change. MRR with history: recipes-for-me 0.44 to 0.50, codebasetograph 0.72 unchanged; without history both unchanged (0.41 and 0.60). Tokens of the opened files: recipes-for-me 2618 to 2595 (with history) and 2454 to 2315 (without), codebasetograph 12964 to 12917 and 9507 to 9457. No improvement in finding is claimed.
 
 ## Keeping the graph fresh
 

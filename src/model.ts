@@ -34,7 +34,7 @@ export interface FileFacts {
   hash: string;
   parseError: boolean;
   /** Language and parser version that produced these facts; a mismatch forces a re-parse of cached files. */
-  lang?: "ts" | "java" | "config" | "asset";
+  lang?: "ts" | "java" | "config" | "asset" | "py" | "go" | "cs";
   parser?: string;
   /** Angular: simple element selector of a component declared here, and custom elements used in its (inline or html) template. */
   selectors?: string[];
@@ -48,10 +48,22 @@ export interface FileFacts {
   /** Kubernetes: `spec.selector` of a Service, and pod template labels of workloads, to link a Service to what it routes to. */
   k8sSelectors?: Array<Record<string, string>>;
   k8sPodLabels?: Array<Record<string, string>>;
+  /** C# only: namespaces declared in this file, to link `using` directives to files. */
+  namespaces?: string[];
   /** Java only: declared package. */
   javaPackage?: string;
   symbols: Array<Omit<GraphNode, "id" | "kind" | "path"> & { name: string }>;
   imports: Array<{ specifier: string; names: string[]; line: number; reexport: boolean; dynamic: boolean; wildcard?: boolean; ref?: "path" | "image" | "action" | "object" | "doc" | "npm" | "maven" | "service" }>;
+}
+
+/** One commit as the graph keeps it: words of its message (not the message) and the indexed files it touched. */
+export interface HistoryCommit {
+  /** First 12 characters of the commit hash. */
+  id: string;
+  /** Commit time, seconds since 1970. */
+  time: number;
+  words: string[];
+  files: string[];
 }
 
 export interface Graph {
@@ -63,4 +75,6 @@ export interface Graph {
   nodes: GraphNode[];
   edges: GraphEdge[];
   skipped: Array<{ path: string; reason: string }>;
+  /** Git history (newest first) used to rank files by the words of earlier commits; absent outside a git work tree. */
+  history?: HistoryCommit[];
 }

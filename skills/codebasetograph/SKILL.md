@@ -19,7 +19,7 @@ Per project: `cbtg index` (from the project root, or `--root <project>`). Re-run
 
 ## Workflow
 
-1. `cbtg context "<task in plain words>" --budget 800`: ranked file/line pointers for the task.
+1. `cbtg context "<task in plain words>" --budget 800`: ranked file/line pointers for the task. Write the task in the words the team uses in commit messages: files are also ranked by earlier commits about the same thing, listed as `[inferred] changed in earlier commits about ...` (a hint, open the file to check).
 2. `cbtg find <name>`: locate a symbol or file.
 3. `cbtg deps <file>` / `cbtg dependents <file>`: what a file imports / who imports it (check this before changing an export).
 4. `cbtg related <file> --depth 2`: files within N import hops.
@@ -41,7 +41,7 @@ If the project registered `cbtg mcp` as an MCP server, use its `cbtg_*` tools in
 
 ## Limits (be honest about them)
 
-- TypeScript/JavaScript/Angular and Java. File-level import edges, top-level declarations (Java also methods and annotations); no call graph yet. Also Dockerfiles, GitHub workflows, docker compose, Kubernetes YAML and SQL `CREATE` statements. Helm templates, `.properties`/`.env` and other languages are not indexed.
+- TypeScript/JavaScript/Angular, Java, Python, Go and C# (the last three: file-level imports plus classes/types, functions and methods; Python also module constants). File-level import edges, top-level declarations (Java also methods and annotations); no call graph yet. Also Dockerfiles, GitHub workflows, docker compose, Kubernetes YAML and SQL `CREATE` statements. Helm templates, `.properties`/`.env` and other languages are not indexed. Go and C# links are name or directory based (`inferred`); C# has no inheritance edges.
 - Java: a class used from the same package without an import is not linked.
 - tsconfig `paths`/`baseUrl` are resolved. Template tags are linked to components by unique element selector (`inferred`). DI, router config and dynamic imports with computed paths are not resolved.
 - If the graph looks stale or a result contradicts the source, re-run `cbtg index` (or keep `cbtg watch` running) or trust the source.

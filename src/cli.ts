@@ -3,15 +3,16 @@ import { graphDirOf, indexRepo, loadGraph } from "./build.js";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { renderHtml } from "./view.js";
+import { overview, renderOverviewMarkdown } from "./overview.js";
 import { renderGraphHtml, DEFAULT_MAX_NODES } from "./viewGraph.js";
 import { watchRepo } from "./watch.js";
 import { handleLine, hookOutput } from "./agent.js";
 import { createInterface } from "node:readline";
-import { loadSynonyms } from "./words.js";
-import { loadTasks, renderReport, runBenchmark } from "./bench.js";
+import { loadLanguage, loadSynonyms, useLanguage } from "./words.js";
+import { loadTasks, renderReport, runBenchmark, runGitBenchmark } from "./bench.js";
 import { installAgents, installClaude, installGit, nextSteps, removeAgents, removeClaude, removeGit, type Scope } from "./install.js";
 import { fileURLToPath } from "node:url";
-import { context, dependencies, dependents, explain, findSymbols, related, resolveTarget, shortestPath } from "./query.js";
+import { context, dependencies, dependents, explain, findSymbols, linkLines, related, resolveTarget, shortestPath } from "./query.js";
 
 const [cmd, ...rest] = process.argv.slice(2);
 const flag = (n: string) => { const i = rest.indexOf(`--${n}`); return i >= 0 ? rest[i + 1] : undefined; };
@@ -30,12 +31,14 @@ const usage = `cbtg <command> [--root dir] [--graph-dir dir]   (--graph-dir keep
   path <from> <to>            shortest chain of resolved links between two files or symbols
   view [--out file]           write a self-contained HTML explorer (default .cbtg/graph.html)
   view --graph [--max-nodes n] [--out file]   drawn file graph (default .cbtg/graph-map.html, 400 nodes)
-  bench <tasks.json> [--files n] [--budget tokens] [--synonyms file.json]   compare grep baseline with graph context on tasks with known relevant files
-  install git [--cbtg-repo url] [--cbtg-ref ref] [--remove]   commit the graph: .gitattributes, AGENTS.md block, GitHub workflow that refreshes it on every PR
+  view --overview [--out dir]  folder-level summary without file or symbol names: overview.json and GRAPH.md (Mermaid), default in .cbtg/
+  bench <tasks.json> [--files n] [--budget tokens] [--synonyms file.json] [--lang nl|none|pack.json]   compare grep baseline with graph context on tasks with known relevant files
+  bench --from-git [--ref ref] [--tasks n] [--files n] [--budget tokens] [--no-history]   same, with tasks from the git history: each commit is searched in the state before it
+  install git [--cbtg-repo url] [--cbtg-ref ref] [--views-branch branch] [--remove]   commit the graph: .gitattributes, AGENTS.md block, GitHub workflow that refreshes it on every PR and the views after every merge to the branch (default main)
   install claude|agents [--scope user|project] [--remove]   install the skill for Claude Code (~/.claude/skills or <root>/.claude/skills), or a marked block in <root>/AGENTS.md for other agents
   mcp                         MCP server over stdio (tools: cbtg_context, cbtg_find, cbtg_deps, cbtg_dependents, cbtg_related, cbtg_explain, cbtg_path)
   hook                        Claude Code UserPromptSubmit hook: reads the hook JSON on stdin, prints task context for the prompt (nothing if there is no graph)
-  context "<task>" [--budget tokens] [--synonyms file.json]   pointer list of task-relevant code (Dutch words are mapped to English; the optional file adds your own, {"inloggen":["login"]})`;
+  context "<task>" [--budget tokens] [--synonyms file.json] [--lang nl|none|pack.json]   pointer list of task-relevant code (task words are mapped to code words with a language pack: nl is the default, none turns it off, or give your own pack file {"stopwords":[],"glossary":{"inloggen":["login"]}}; --synonyms adds single words on top)`;
 
 async function main() {
   if (cmd === "index") {
@@ -48,7 +51,7 @@ async function main() {
     const scope = (flag("scope") ?? "user") as Scope;
     if ((target !== "claude" && target !== "agents" && target !== "git") || (scope !== "user" && scope !== "project")) { console.error("usage: cbtg install claude|agents|git [--scope user|project] [--remove] [--cbtg-repo url] [--cbtg-ref ref]"); process.exit(2); }
     const remove = rest.includes("--remove");
-    const results = target === "git" ? await (remove ? removeGit(root) : installGit(root, { repo: flag("cbtg-repo"), ref: flag("cbtg-ref") }))
+    const results = target === "git" ? await (remove ? removeGit(root) : installGit(root, { repo: flag("cbtg-repo"), ref: flag("cbtg-ref"), viewsBranch: flag("views-branch") }))
       : [target === "claude" ? await (remove ? removeClaude : installClaude)(scope, root) : await (remove ? removeAgents : installAgents)(root)];
     for (const r of results) console.log(`${r.target}: ${r.action} ${r.file}`);
     if (!remove && target === "git") console.log("Now run `cbtg index` and commit .cbtg/graph.json, .cbtg/.gitignore, .gitattributes, AGENTS.md and the workflow.");
@@ -76,6 +79,13 @@ async function main() {
     if (out) console.log(out);
     return;
   }
+  if (flag("lang")) useLanguage(await loadLanguage(flag("lang")!));
+  if (cmd === "bench" && rest.includes("--from-git")) {
+    const opts = { maxFiles: Number(flag("files") ?? 5), budget: Number(flag("budget") ?? 800), synonyms: flag("synonyms") ? await loadSynonyms(path.resolve(flag("synonyms")!)) : {},
+      ref: flag("ref"), tasks: Number(flag("tasks") ?? 50), history: !rest.includes("--no-history") };
+    console.log(renderReport(await runGitBenchmark(root, opts), opts));
+    return;
+  }
   const g = await loadGraph(root, graphDir);
   if (!g) { console.error("no graph found; run `cbtg index` first"); process.exit(1); }
   const arg = positional[0] ?? "";
@@ -84,8 +94,8 @@ async function main() {
     `${e[side].replace(/^(file|pkg):/, "")}${e.line ? `:${e.line}` : ""} [${e.evidence}]${e.evidence === "unresolved" ? ` (${e.specifier})` : ""}`;
   switch (cmd) {
     case "find": for (const n of findSymbols(g, arg)) console.log(`${n.kind} ${n.name}${n.detail ? ` (${n.detail})` : ""} ${n.path}${n.lines ? `:${n.lines[0]}-${n.lines[1]}` : ""}`); break;
-    case "deps": for (const e of dependencies(g, arg)) console.log(fmt(e, "to")); break;
-    case "dependents": for (const e of dependents(g, arg)) console.log(fmt(e, "from")); break;
+    case "deps": for (const l of linkLines(dependencies(g, arg), "to")) console.log(l); break;
+    case "dependents": for (const l of linkLines(dependents(g, arg), "from")) console.log(l); break;
     case "related": for (const r of related(g, arg, Number(flag("depth") ?? 1))) console.log(`${r.path} (distance ${r.distance})`); break;
     case "explain": case "path": {
       const inputs = cmd === "path" ? [positional[0], positional[1]] : [arg];
@@ -110,6 +120,15 @@ async function main() {
       break;
     }
     case "view": {
+      if (rest.includes("--overview")) {
+        const dir = path.resolve(flag("out") ?? graphDirOf(root, graphDir));
+        const o = overview(g);
+        await fs.mkdir(dir, { recursive: true });
+        await fs.writeFile(path.join(dir, "overview.json"), JSON.stringify(o, null, 1) + "\n");
+        await fs.writeFile(path.join(dir, "GRAPH.md"), renderOverviewMarkdown(o));
+        console.log(`wrote ${path.join(dir, "overview.json")} and ${path.join(dir, "GRAPH.md")}`);
+        break;
+      }
       const map = process.argv.includes("--graph");
       const out = path.resolve(flag("out") ?? path.join(graphDirOf(root, graphDir), map ? "graph-map.html" : "graph.html"));
       const max = Number(flag("max-nodes") ?? DEFAULT_MAX_NODES);
@@ -121,7 +140,7 @@ async function main() {
     }
     case "context": { const r = context(g, arg, Number(flag("budget") ?? 800), await synonyms()); console.log(r.text); if (r.truncated) console.log("(truncated by budget)"); break; }
     case "bench": {
-      if (!arg) { console.error("usage: cbtg bench <tasks.json>"); process.exit(1); }
+      if (!arg) { console.error("usage: cbtg bench <tasks.json> | cbtg bench --from-git"); process.exit(1); }
       const opts = { maxFiles: Number(flag("files") ?? 5), budget: Number(flag("budget") ?? 800), synonyms: await synonyms() };
       console.log(renderReport(await runBenchmark(path.resolve(root), g, await loadTasks(path.resolve(arg)), opts), opts));
       break;

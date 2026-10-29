@@ -22,3 +22,17 @@ export function attributeSelector(selector: string): string | undefined {
 export function elementSelector(selector: string): string | undefined {
   return /^[a-z][a-z0-9]*-[a-z0-9-]*$/.test(selector.trim()) ? selector.trim() : undefined;
 }
+
+const BUNDLE_EXTS = [".html", ".scss", ".sass", ".less", ".css", ".spec.ts"];
+
+/**
+ * Files that belong with a source file by naming convention: for `user-list.component.ts` that is `user-list.component.html`,
+ * `.scss`/`.css` and `.spec.ts` next to it. Convention, not proof, so callers present these as `inferred`.
+ * Works on the indexed paths only; a file that is itself a template, style or spec has no bundle.
+ */
+export function componentBundle(paths: Iterable<string>, file: string): string[] {
+  if (!/\.ts$/.test(file) || /\.(spec|test)\.ts$/.test(file) || /\.d\.ts$/.test(file)) return [];
+  const stem = file.slice(0, -3);
+  const all = new Set(paths);
+  return BUNDLE_EXTS.map((e) => stem + e).filter((p) => all.has(p));
+}

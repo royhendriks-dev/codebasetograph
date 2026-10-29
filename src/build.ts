@@ -1,10 +1,13 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { historyForGraph, readGitHistory } from "./history.js";
 import { discover } from "./discover.js";
 import { parseFile, TS_PARSER_VERSION } from "./parse.js";
 import { parseJava, JAVA_PARSER_VERSION } from "./java.js";
 import { parseConfig, CONFIG_PARSER_VERSION } from "./config.js";
 import { parseAsset, ASSET_PARSER_VERSION } from "./asset.js";
+import { parseTreeSitter, treeSitterLangOf, TREESITTER_PARSER_VERSIONS, type TsLang } from "./treesitter.js";
+import { linkTreeSitter } from "./linkTreeSitter.js";
 import { aliasFor, loadAliases, type Alias } from "./tsconfig.js";
 import type { FileFacts, Graph, GraphEdge, GraphNode } from "./model.js";
 import { isTestPath } from "./query.js";
@@ -12,8 +15,10 @@ import { isTestPath } from "./query.js";
 export const GRAPH_DIR = ".cbtg";
 export const GRAPH_FILE = "graph.json";
 
-export function languageOf(rel: string): "ts" | "java" | "config" | "asset" {
+export function languageOf(rel: string): "ts" | "java" | "config" | "asset" | TsLang {
   if (rel.endsWith(".java")) return "java";
+  const other = treeSitterLangOf(rel);
+  if (other) return other;
   if (/\.(html|scss|css)$/.test(rel)) return "asset";
   return /\.(ya?ml|sql|conf|properties|md)$/.test(rel) || /(^|\/)(\.env[^/]*|package\.json|pom\.xml)$/.test(rel) || /(^|\/)Dockerfile[^/]*$/.test(rel) ? "config" : "ts";
 }
@@ -130,6 +135,7 @@ export function link(files: Record<string, FileFacts>, aliases: Alias[] = []): {
       }
       continue;
     }
+    if (f.lang === "py" || f.lang === "go" || f.lang === "cs") { linkTreeSitter(f, files, known, edges, pkgNode); continue; }
     for (const imp of f.imports) {
       const kind = imp.ref === "path" ? "references" : imp.reexport ? "reexports" : "imports";
       const alias = !imp.specifier.startsWith(".") ? resolveAlias(aliasFor(aliases, f.path), imp.specifier, known) : undefined;
@@ -312,11 +318,18 @@ export function serializeGraph(g: Graph): string {
   const lines = (items: unknown[]) => items.map((i) => JSON.stringify(i)).join(",\n");
   const files = Object.keys(g.files).sort(byCodeUnit).map((k) => `${JSON.stringify(k)}:${JSON.stringify(g.files[k])}`).join(",\n");
   const aliases = g.aliases ? `"aliases":${JSON.stringify(g.aliases)},\n` : "";
-  return `{"version":${g.version},"root":${JSON.stringify(g.root)},\n${aliases}"files":{\n${files}\n},\n"nodes":[\n${lines(g.nodes)}\n],\n"edges":[\n${lines(g.edges)}\n],\n"skipped":[\n${lines(g.skipped)}\n]}\n`;
+  const history = g.history ? `,\n"history":[\n${lines(g.history)}\n]` : "";
+  return `{"version":${g.version},"root":${JSON.stringify(g.root)},\n${aliases}"files":{\n${files}\n},\n"nodes":[\n${lines(g.nodes)}\n],\n"edges":[\n${lines(g.edges)}\n],\n"skipped":[\n${lines(g.skipped)}\n]${history}}\n`;
 }
 
+/**
+ * `merge` (default) keeps commits from the previous graph that git no longer shows (a shallow clone); `git` uses only what
+ * git shows now (the benchmark needs that, so a graph of an older commit never sees later work); `off` stores no history.
+ */
+export interface IndexOptions { history?: "merge" | "git" | "off" }
+
 /** Indexes `root`. Re-parses only files whose content hash changed; links are always rebuilt. */
-export async function indexRepo(root: string, graphDir?: string): Promise<{ graph: Graph; stats: IndexStats }> {
+export async function indexRepo(root: string, graphDir?: string, opts: IndexOptions = {}): Promise<{ graph: Graph; stats: IndexStats }> {
   root = path.resolve(root);
   const previous = await loadGraph(root, graphDir);
   const { files: found, configs, skipped } = await discover(root);
@@ -332,12 +345,17 @@ export async function indexRepo(root: string, graphDir?: string): Promise<{ grap
     const hash = createHash("sha256").update(text).digest("hex");
     const prev = previous?.files[rel];
     const kind = languageOf(rel);
-    const parserVersion = { ts: TS_PARSER_VERSION, java: JAVA_PARSER_VERSION, config: CONFIG_PARSER_VERSION, asset: ASSET_PARSER_VERSION }[kind];
+    const parserVersion = { ts: TS_PARSER_VERSION, java: JAVA_PARSER_VERSION, config: CONFIG_PARSER_VERSION, asset: ASSET_PARSER_VERSION, ...TREESITTER_PARSER_VERSIONS }[kind];
     if (prev && prev.hash === hash && prev.parser === parserVersion) { files[rel] = prev; reused++; }
-    else { files[rel] = kind === "java" ? await parseJava(rel, text) : kind === "config" ? parseConfig(rel, text) : kind === "asset" ? parseAsset(rel, text) : parseFile(rel, text); parsed++; }
+    else { files[rel] = kind === "py" || kind === "go" || kind === "cs" ? await parseTreeSitter(kind, rel, text) : kind === "java" ? await parseJava(rel, text) : kind === "config" ? parseConfig(rel, text) : kind === "asset" ? parseAsset(rel, text) : parseFile(rel, text); parsed++; }
   }
   const removed = previous ? Object.keys(previous.files).filter((p) => !(p in files)).length : 0;
   const graph: Graph = { version: 1, root: path.basename(root), files, aliases, ...link(files, aliases), skipped };
+  const mode = opts.history ?? "merge";
+  if (mode !== "off") {
+    const history = historyForGraph(await readGitHistory(root), files, mode === "merge" ? previous?.history : undefined);
+    if (history.length) graph.history = history;
+  }
   const dir = graphDirOf(root, graphDir);
   await fs.mkdir(dir, { recursive: true });
   if (!graphDir) await keepOutOfGit(root);
