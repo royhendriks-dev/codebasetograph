@@ -33,12 +33,19 @@ export function linkLines(edges: GraphEdge[], side: "from" | "to"): string[] {
   const groups = new Map<string, { target: string; evidence: string; lines: number[]; specifier?: string }>();
   for (const e of edges) {
     const target = e[side].replace(/^(file|pkg):/, "");
-    const key = `${target}\u0000${e.evidence}\u0000${e.evidence === "unresolved" ? e.specifier ?? "" : ""}`;
-    const g = groups.get(key) ?? { target, evidence: e.evidence, lines: [], specifier: e.evidence === "unresolved" ? e.specifier : undefined };
+    const specifier = e.evidence === "unresolved" ? e.specifier : undefined;
+    const key = [target, e.evidence, specifier ?? ""].join("\u0000");
+    const g = groups.get(key) ?? { target, evidence: e.evidence, lines: [], specifier };
     if (e.line !== undefined && !g.lines.includes(e.line)) g.lines.push(e.line);
     groups.set(key, g);
   }
-  return [...groups.values()].map((g) => `${g.target}${g.lines.length ? ":" + g.lines.sort((a, b) => a - b).join(",") : ""} [${g.evidence}]${g.specifier !== undefined ? ` (${g.specifier})` : ""}`);
+  return [...groups.values()].map(renderLink);
+}
+
+function renderLink(g: { target: string; evidence: string; lines: number[]; specifier?: string }): string {
+  const lines = g.lines.length ? ":" + g.lines.sort((a, b) => a - b).join(",") : "";
+  const spec = g.specifier === undefined ? "" : ` (${g.specifier})`;
+  return `${g.target}${lines} [${g.evidence}]${spec}`;
 }
 
 /** Bounded breadth-first walk over resolved import edges, in both directions. */
@@ -159,6 +166,27 @@ function fuse(lists: string[][], k = 10): string[] {
   return [...score].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).map(([p]) => p);
 }
 
+/** One item per file: the best symbols on a single line, so one large file does not eat the budget. */
+function matchItem(path: string, nodes: GraphNode[]): ContextItem {
+  const top = nodes.slice(0, SYMBOLS_PER_FILE);
+  const names = top.map(symbolLabel);
+  const more = nodes.length > top.length ? ` (+${nodes.length - top.length} more)` : "";
+  return { path, lines: top[0].lines, why: `${names.join(", ")}${more} match task words`, evidence: "extracted" };
+}
+
+function symbolLabel(n: GraphNode): string {
+  const kind = n.kind === "symbol" ? n.detail : "file";
+  const range = n.kind === "symbol" && n.lines ? `:${n.lines[0]}-${n.lines[1]}` : "";
+  return `${kind} ${n.name}${n.exported ? "*" : ""}${range}`;
+}
+
+/** A file that joined the ranking through a link: an import edge is `resolved`, a component bundle member is only `inferred` by naming. */
+function linkedItem(g: Graph, path: string, from: string, paths: string[]): ContextItem {
+  const linked = [...dependencies(g, from), ...dependents(g, from)].some((e) => e.from === fileId(path) || e.to === fileId(path));
+  if (!linked && componentBundle(paths, from).includes(path)) return { path, why: `template, style or spec of ${from}`, evidence: "inferred" };
+  return { path, why: `imports or is imported by ${from}`, evidence: "resolved" };
+}
+
 /**
  * Task context: match words from the task to symbol/file names, give files linked to the best matches part of their score,
  * merge that ranking with the commit-history ranking, and stop when the budget (approximate token count of the rendered
@@ -205,18 +233,9 @@ export function context(g: Graph, task: string, budgetTokens = 800, synonyms: Re
   const items: ContextItem[] = [];
   for (const p of ranking) {
     const own = matches.get(p);
-    if (own) {
-      // One item per file: the best symbols on a single line, so one large file does not eat the budget.
-      const top = own.slice(0, SYMBOLS_PER_FILE).map(([, n]) => n);
-      const names = top.map((n) => `${n.kind === "symbol" ? n.detail + " " : "file "}${n.name}${n.exported ? "*" : ""}${n.kind === "symbol" && n.lines ? `:${n.lines[0]}-${n.lines[1]}` : ""}`);
-      const more = own.length - top.length;
-      items.push({ path: p, lines: top[0].lines, why: `${names.join(", ")}${more > 0 ? ` (+${more} more)` : ""} match task words`, evidence: "extracted" });
-    } else if (via.has(p)) {
-      const bundled = componentBundle(paths, via.get(p)!).includes(p) && !dependencies(g, via.get(p)!).concat(dependents(g, via.get(p)!)).some((e) => e.from === fileId(p) || e.to === fileId(p));
-      items.push(bundled ? { path: p, why: `template, style or spec of ${via.get(p)}`, evidence: "inferred" } : { path: p, why: `imports or is imported by ${via.get(p)}`, evidence: "resolved" });
-    } else if (history.has(p)) {
-      items.push({ path: p, why: `changed in earlier commits about ${[...history.get(p)!.words].slice(0, 3).join(", ")}`, evidence: "inferred" });
-    }
+    if (own) items.push(matchItem(p, own.map(([, n]) => n)));
+    else if (via.has(p)) items.push(linkedItem(g, p, via.get(p)!, paths));
+    else if (history.has(p)) items.push({ path: p, why: `changed in earlier commits about ${[...history.get(p)!.words].slice(0, 3).join(", ")}`, evidence: "inferred" });
   }
   const lines: string[] = [];
   const shown: ContextItem[] = [];
