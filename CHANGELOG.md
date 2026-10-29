@@ -11,8 +11,12 @@ Alle noemenswaardige wijzigingen per release. Versies volgen [semver](https://se
 - `cbtg bench --from-git`: taken uit de eigen git-historie, elke taak gezocht in de toestand vóór de commit (geen terugblik); met `--no-history` te vergelijken. Het rapport toont ook hoe vaak minstens één juist bestand gevonden is en de MRR.
 - Generieke tree-sitter-extractor (`src/treesitter.ts`) met Python, Go en C#: declaraties, methoden en imports/`using`, plus koppelingen tussen bestanden (`src/linkTreeSitter.ts`). De grammatica's komen uit het bestaande `tree-sitter-wasms` en worden pas geladen als er zulke bestanden zijn.
 
+- Angular-bundel in `cbtg context`: staat `x.component.ts` in de resultaten, dan volgen `x.component.html`, `.scss`/`.css` en `.spec.ts` ernaast (`[inferred] template, style or spec of ...`).
+
 ### Gewijzigd
-- `cbtg context`: maximaal 3 symboolregels per bestand, en bestanden die direct gekoppeld zijn aan de beste treffers krijgen een deel van hun score (in plaats van achteraan de lijst).
+- `cbtg context`: één regel per bestand met maximaal 3 symbolen op die regel (`function a:12-20, class B:30-40 (+2 more)`), zodat één groot bestand het budget niet vult. Eerder: maximaal 3 symboolregels per bestand, en bestanden die direct gekoppeld zijn aan de beste treffers krijgen een deel van hun score (in plaats van achteraan de lijst).
+- `cbtg deps`, `cbtg dependents` en de MCP-tools `cbtg_deps`/`cbtg_dependents` tonen een bestand dat meermaals dezelfde module importeert één keer, met alle regelnummers (`b.ts:1,2,3 [resolved]`).
+- Docker compose: `${VAR:-default}` in `build.context` en `build.dockerfile` wordt met de standaardwaarde uitgewerkt, zodat de koppeling naar de echte Dockerfile `resolved` is in plaats van een nep-node met `${...}`.
 - `cbtg bench` telt aan de graphkant alleen bestanden die binnen het budget getoond worden.
 - De workflow van `cbtg install git` checkt uit met `fetch-depth: 0`.
 

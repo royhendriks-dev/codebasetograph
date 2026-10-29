@@ -28,7 +28,7 @@ discover -> parse (per file) -> link (all files) -> graph.json -> query -> CLI /
 | `discover.ts` | Walk repo, default exclusions, `.gitignore` (nested files, negation, `*`/`?`/`**`, last rule wins), skip `.d.ts`/minified/large files, no symlinks |
 | `parse.ts` | TypeScript compiler API (parse only, nothing executed): imports, re-exports, `require`, dynamic `import('literal')`, top-level declarations, Angular decorator roles and selectors |
 | `build.ts` | Per-file cache by content hash, linking, atomic write of `.cbtg/graph.json` |
-| `query.ts` | find, deps, dependents, bounded related walk, budgeted task context (names + commit history) |
+| `query.ts` | find, deps, dependents, bounded related walk, budgeted task context (names + commit history; one line per file, neighbours and Angular bundle score along; `linkLines` merges repeated imports) |
 | `overview.ts` | `cbtg view --overview`: folder-level summary (`overview.json`) and Mermaid page (`GRAPH.md`) with only top-level folder names and counts, safe to show outside the repository |
 | `history.ts` | `git log` (read-only) to per-commit message words and touched indexed files, stored in the graph |
 | `view.ts` | Self-contained HTML explorer generated from the graph: search, symbols per file, imports / imported-by with evidence badges. Repo-derived text is set via `textContent` (untrusted input). This is the list view for reading |

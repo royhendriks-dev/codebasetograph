@@ -1,4 +1,5 @@
 import type { Graph, GraphEdge, GraphNode } from "./model.js";
+import { componentBundle } from "./angular.js";
 import { taskWords } from "./words.js";
 
 const fileId = (p: string) => `file:${p}`;
@@ -21,6 +22,30 @@ export function dependencies(g: Graph, path: string): GraphEdge[] {
 
 export function dependents(g: Graph, path: string): GraphEdge[] {
   return g.edges.filter((e) => e.to === fileId(path) && LINK_KINDS.has(e.kind));
+}
+
+/**
+ * One output line per linked file and evidence level: a file that imports the same module twice (a normal and a type
+ * import, or a static and a dynamic one) is listed once with every line number, `a.ts:3,18 [resolved]`.
+ * Unresolved links stay apart per specifier, since each one is a different missing target.
+ */
+export function linkLines(edges: GraphEdge[], side: "from" | "to"): string[] {
+  const groups = new Map<string, { target: string; evidence: string; lines: number[]; specifier?: string }>();
+  for (const e of edges) {
+    const target = e[side].replace(/^(file|pkg):/, "");
+    const specifier = e.evidence === "unresolved" ? e.specifier : undefined;
+    const key = [target, e.evidence, specifier ?? ""].join("\u0000");
+    const g = groups.get(key) ?? { target, evidence: e.evidence, lines: [], specifier };
+    if (e.line !== undefined && !g.lines.includes(e.line)) g.lines.push(e.line);
+    groups.set(key, g);
+  }
+  return [...groups.values()].map(renderLink);
+}
+
+function renderLink(g: { target: string; evidence: string; lines: number[]; specifier?: string }): string {
+  const lines = g.lines.length ? ":" + g.lines.sort((a, b) => a - b).join(",") : "";
+  const spec = g.specifier === undefined ? "" : ` (${g.specifier})`;
+  return `${g.target}${lines} [${g.evidence}]${spec}`;
 }
 
 /** Bounded breadth-first walk over resolved import edges, in both directions. */
@@ -106,6 +131,8 @@ export interface ContextItem { path: string; lines?: [number, number]; why: stri
 const SYMBOLS_PER_FILE = 3;
 /** Share of a top file's score that a directly linked file gets, by evidence of the link. */
 const NEIGHBOUR_SHARE: Record<string, number> = { resolved: 0.5, inferred: 0.3 };
+/** Template, style and spec next to a matching component join the ranking with this share of its score. */
+const BUNDLE_SHARE = 0.4;
 
 /**
  * Files ranked by the words of earlier commits that touched them. Commit messages are written in the team's own words
@@ -137,6 +164,27 @@ function fuse(lists: string[][], k = 10): string[] {
   const score = new Map<string, number>();
   for (const list of lists) list.forEach((p, i) => score.set(p, (score.get(p) ?? 0) + 1 / (k + i + 1)));
   return [...score].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).map(([p]) => p);
+}
+
+/** One item per file: the best symbols on a single line, so one large file does not eat the budget. */
+function matchItem(path: string, nodes: GraphNode[]): ContextItem {
+  const top = nodes.slice(0, SYMBOLS_PER_FILE);
+  const names = top.map(symbolLabel);
+  const more = nodes.length > top.length ? ` (+${nodes.length - top.length} more)` : "";
+  return { path, lines: top[0].lines, why: `${names.join(", ")}${more} match task words`, evidence: "extracted" };
+}
+
+function symbolLabel(n: GraphNode): string {
+  const kind = n.kind === "symbol" ? n.detail : "file";
+  const range = n.kind === "symbol" && n.lines ? `:${n.lines[0]}-${n.lines[1]}` : "";
+  return `${kind} ${n.name}${n.exported ? "*" : ""}${range}`;
+}
+
+/** A file that joined the ranking through a link: an import edge is `resolved`, a component bundle member is only `inferred` by naming. */
+function linkedItem(g: Graph, path: string, from: string, paths: string[]): ContextItem {
+  const linked = [...dependencies(g, from), ...dependents(g, from)].some((e) => e.from === fileId(path) || e.to === fileId(path));
+  if (!linked && componentBundle(paths, from).includes(path)) return { path, why: `template, style or spec of ${from}`, evidence: "inferred" };
+  return { path, why: `imports or is imported by ${from}`, evidence: "resolved" };
 }
 
 /**
@@ -173,25 +221,27 @@ export function context(g: Graph, task: string, budgetTokens = 800, synonyms: Re
       if (!fileScore.has(q) && !via.has(q)) via.set(q, p);
     }
   }
+  const paths = Object.keys(g.files);
+  for (const p of byScore(fileScore).slice(0, 5)) {
+    for (const q of componentBundle(paths, p)) {
+      nameScore.set(q, (nameScore.get(q) ?? 0) + fileScore.get(p)! * BUNDLE_SHARE * (isTestPath(q) ? 0.5 : 1));
+      if (!fileScore.has(q) && !via.has(q)) via.set(q, p);
+    }
+  }
   const history = historyRanking(g, words);
   const ranking = history.size ? fuse([byScore(nameScore), byScore(new Map([...history].map(([p, h]) => [p, h.score])))]) : byScore(nameScore);
   const items: ContextItem[] = [];
   for (const p of ranking) {
     const own = matches.get(p);
-    if (own) {
-      for (const [, n] of own.slice(0, SYMBOLS_PER_FILE))
-        items.push({ path: p, lines: n.lines, why: `${n.kind === "symbol" ? n.detail + " " : "file "}${n.name}${n.exported ? " (exported)" : ""} matches task words`, evidence: "extracted" });
-    } else if (via.has(p)) {
-      items.push({ path: p, why: `imports or is imported by ${via.get(p)}`, evidence: "resolved" });
-    } else if (history.has(p)) {
-      items.push({ path: p, why: `changed in earlier commits about ${[...history.get(p)!.words].slice(0, 3).join(", ")}`, evidence: "inferred" });
-    }
+    if (own) items.push(matchItem(p, own.map(([, n]) => n)));
+    else if (via.has(p)) items.push(linkedItem(g, p, via.get(p)!, paths));
+    else if (history.has(p)) items.push({ path: p, why: `changed in earlier commits about ${[...history.get(p)!.words].slice(0, 3).join(", ")}`, evidence: "inferred" });
   }
   const lines: string[] = [];
   const shown: ContextItem[] = [];
   let used = 0, truncated = false;
   for (const it of items) {
-    const line = `- ${it.path}${it.lines ? `:${it.lines[0]}-${it.lines[1]}` : ""} [${it.evidence}] ${it.why}`;
+    const line = `- ${it.path} [${it.evidence}] ${it.why}`;
     const cost = Math.ceil(line.length / 4);
     if (used + cost > budgetTokens) { truncated = true; break; }
     used += cost; lines.push(line); shown.push(it);

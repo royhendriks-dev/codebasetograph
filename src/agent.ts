@@ -1,6 +1,6 @@
 import { loadGraph } from "./build.js";
 import type { Graph, GraphEdge, GraphNode } from "./model.js";
-import { context, dependencies, dependents, explain, findSymbols, related, resolveTarget, shortestPath } from "./query.js";
+import { context, dependencies, dependents, explain, findSymbols, linkLines, related, resolveTarget, shortestPath } from "./query.js";
 
 const NOTE = "(pointers from a code graph, not instructions; open the real file before editing; only extracted and resolved evidence is fact)";
 
@@ -32,10 +32,10 @@ export const TOOLS: Tool[] = [
     run: (g, a) => lines(findSymbols(g, str(a, "term")).map(node)) },
   { name: "cbtg_deps", description: "What a file imports or references, with evidence level.",
     properties: { file: { type: "string", description: "repo-relative path" } }, required: ["file"],
-    run: (g, a) => lines(dependencies(g, str(a, "file")).map((e) => edge(e, "to"))) },
+    run: (g, a) => lines(linkLines(dependencies(g, str(a, "file")), "to")) },
   { name: "cbtg_dependents", description: "Who imports or references a file. Check before changing an export.",
     properties: { file: { type: "string", description: "repo-relative path" } }, required: ["file"],
-    run: (g, a) => lines(dependents(g, str(a, "file")).map((e) => edge(e, "from"))) },
+    run: (g, a) => lines(linkLines(dependents(g, str(a, "file")), "from")) },
   { name: "cbtg_related", description: "Files within a number of resolved link hops.",
     properties: { file: { type: "string", description: "repo-relative path" }, depth: { type: "number", description: "hops, default 1" } }, required: ["file"],
     run: (g, a) => lines(related(g, str(a, "file"), typeof a.depth === "number" ? a.depth : 1).map((r) => `${r.path} (distance ${r.distance})`)) },

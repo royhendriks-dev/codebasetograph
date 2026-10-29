@@ -12,7 +12,7 @@ import { loadLanguage, loadSynonyms, useLanguage } from "./words.js";
 import { loadTasks, renderReport, runBenchmark, runGitBenchmark } from "./bench.js";
 import { installAgents, installClaude, installGit, nextSteps, removeAgents, removeClaude, removeGit, type Scope } from "./install.js";
 import { fileURLToPath } from "node:url";
-import { context, dependencies, dependents, explain, findSymbols, related, resolveTarget, shortestPath } from "./query.js";
+import { context, dependencies, dependents, explain, findSymbols, linkLines, related, resolveTarget, shortestPath } from "./query.js";
 
 const [cmd, ...rest] = process.argv.slice(2);
 const flag = (n: string) => { const i = rest.indexOf(`--${n}`); return i >= 0 ? rest[i + 1] : undefined; };
@@ -94,8 +94,8 @@ async function main() {
     `${e[side].replace(/^(file|pkg):/, "")}${e.line ? `:${e.line}` : ""} [${e.evidence}]${e.evidence === "unresolved" ? ` (${e.specifier})` : ""}`;
   switch (cmd) {
     case "find": for (const n of findSymbols(g, arg)) console.log(`${n.kind} ${n.name}${n.detail ? ` (${n.detail})` : ""} ${n.path}${n.lines ? `:${n.lines[0]}-${n.lines[1]}` : ""}`); break;
-    case "deps": for (const e of dependencies(g, arg)) console.log(fmt(e, "to")); break;
-    case "dependents": for (const e of dependents(g, arg)) console.log(fmt(e, "from")); break;
+    case "deps": for (const l of linkLines(dependencies(g, arg), "to")) console.log(l); break;
+    case "dependents": for (const l of linkLines(dependents(g, arg), "from")) console.log(l); break;
     case "related": for (const r of related(g, arg, Number(flag("depth") ?? 1))) console.log(`${r.path} (distance ${r.distance})`); break;
     case "explain": case "path": {
       const inputs = cmd === "path" ? [positional[0], positional[1]] : [arg];
