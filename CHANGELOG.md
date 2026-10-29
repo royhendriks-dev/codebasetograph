@@ -4,6 +4,8 @@ Alle noemenswaardige wijzigingen per release. Versies volgen [semver](https://se
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-29
+
 ### Toegevoegd
 - Git-historie in de ranking: `cbtg index` bewaart per commit (max. 2000) de woorden van het commitbericht en de geïndexeerde bestanden; `cbtg context` voegt die ranglijst samen met de naamscore. Bestanden die alleen via historie gevonden worden staan er als `[inferred]`.
 - `cbtg view --overview`: mappenoverzicht zonder bestands-, symbool- of secretnamen (`overview.json` en `GRAPH.md` met Mermaid-diagram), veilig om buiten de repo te tonen.
